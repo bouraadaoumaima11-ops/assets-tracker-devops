@@ -2,7 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { cacheLife, cacheTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { getAllExchangeRates, resolveRate } from "./exchange-rate-service";
+import { getAllExchangeRates, getFreshExchangeRates, resolveRate } from "./exchange-rate-service";
 import { serializeAccountWithHoldings } from "@/lib/types";
 import { log } from "@/lib/logger";
 import type {
@@ -28,6 +28,14 @@ async function fetchUserAccountsWithHoldingsInner(
   cacheTag("accounts");
   cacheTag(`accounts:${userId}`);
   cacheLife("hours");
+  return queryActiveAccountsWithHoldings(userId);
+}
+
+/** The uncached query behind the cached reader above; see the `fresh` path in
+ * `computeNetWorthSummary` for why background jobs need it directly. */
+async function queryActiveAccountsWithHoldings(
+  userId: string,
+): Promise<SerializedAccountWithHoldings[]> {
   const raw = await prisma.account.findMany({
     where: { userId, isActive: true },
     include: { holdings: { where: { quantity: { gt: 0 } } } },
@@ -57,16 +65,30 @@ export const fetchUserArchivedAccountsWithHoldings = cache(
   fetchUserArchivedAccountsWithHoldingsInner,
 );
 
-async function computeNetWorthSummary(
+/**
+ * Uncached net-worth computation.
+ *
+ * `fresh` swaps the two cached inputs (accounts/holdings and the FX map) for
+ * direct DB reads. Background jobs that write and then read in the same run
+ * must pass it: the snapshot cron refreshes prices/FX and materializes
+ * recurring cash + DCA rows, then revalidates `accounts` / `exchange-rates` /
+ * `net-worth` with `"max"` — stale-while-revalidate, so the cached readers hand
+ * back pre-refresh values and the persisted row lands one cron cycle behind
+ * (#640). Same reasoning as the direct price/FX reads in
+ * `recurring-investment-service`. PriceCache below is already read directly, so
+ * the price leg needs no switch. Render paths keep the cached readers.
+ */
+export async function computeNetWorthSummary(
   userId: string,
   baseCurrency: string,
+  opts: { fresh?: boolean } = {},
 ): Promise<NetWorthSummary> {
   // Load accounts and exchange rates in parallel.
-  // Both are React-cached, so if DashboardContent already fired these
-  // calls without awaiting, we get the memoised results here for free.
+  // On the cached path both are React-cached, so if DashboardContent already
+  // fired these calls without awaiting, we get the memoised results for free.
   const [accounts, allRatesMap] = await Promise.all([
-    fetchUserAccountsWithHoldings(userId),
-    getAllExchangeRates(),
+    opts.fresh ? queryActiveAccountsWithHoldings(userId) : fetchUserAccountsWithHoldings(userId),
+    opts.fresh ? getFreshExchangeRates() : getAllExchangeRates(),
   ]);
 
   // Phase 2: fetch only the prices needed for this user's holdings

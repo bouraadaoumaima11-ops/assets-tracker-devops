@@ -151,12 +151,16 @@ export async function GET(request: Request) {
       include: { appSettings: true },
     });
 
-    // 3. Create snapshots for each user (in parallel)
+    // 3. Create snapshots for each user (in parallel).
+    // `fresh: true` — the tag bumps above are stale-while-revalidate ("max"), so
+    // reading the cached net-worth summary here would persist the PREVIOUS
+    // cycle's prices/FX/balances and shift the whole history one day (#640).
+    // The snapshot is computed from direct DB reads instead.
     const snapshotResults = await Promise.allSettled(
       users.map(async (user) => {
         const baseCurrency = user.appSettings?.baseCurrency ?? "USD";
         log.info("cron.snapshot.create", { userId: user.id, baseCurrency });
-        const snapshot = await createSnapshot(user.id, baseCurrency);
+        const snapshot = await createSnapshot(user.id, baseCurrency, { fresh: true });
         return { userId: user.id, snapshot };
       }),
     );
