@@ -4,7 +4,7 @@ import { log } from "@/lib/logger";
 import { Decimal } from "@/generated/prisma/internal/prismaNamespace";
 import { computeDueOccurrences, utcDateOnly } from "./recurring-cash-service";
 import { taiwanCalendarDay } from "@/lib/app-day";
-import { resolveRate } from "./exchange-rate-service";
+import { getFreshExchangeRates, resolveRate } from "./exchange-rate-service";
 import { fetchStockPrices, fetchCryptoPrices } from "./price-service";
 
 class HoldingCurrencyMismatchError extends Error {
@@ -33,18 +33,10 @@ class HoldingCurrencyMismatchError extends Error {
  * `getCachedPricesForSymbols` / `getAllExchangeRates`): the cron writes fresh
  * prices/rates just before this runs but only revalidates the `prices` /
  * `exchange-rates` cache tags afterward, so the cached readers would return
- * pre-refresh values and the buys would use stale price/FX.
+ * pre-refresh values and the buys would use stale price/FX. The FX half of that
+ * direct read lives in `exchange-rate-service.getFreshExchangeRates` — the
+ * snapshot cron path needs the same map (#640).
  */
-
-/** Loads all exchange rates straight from the DB as a "FROM_TO" → rate map. */
-async function loadFreshRateMap(): Promise<Map<string, number>> {
-  const rows = await prisma.exchangeRate.findMany({
-    select: { fromCurrency: true, toCurrency: true, rate: true },
-  });
-  const map = new Map<string, number>();
-  for (const r of rows) map.set(`${r.fromCurrency}_${r.toCurrency}`, Number(r.rate));
-  return map;
-}
 
 /** Resolves a usable market price (value + currency) for the rule's symbol. */
 async function resolvePrice(
@@ -98,7 +90,7 @@ export async function materializeDueInvestments(
   });
   if (dueRules.length === 0) return { created: 0, rulesProcessed: 0 };
 
-  const rateMap = await loadFreshRateMap();
+  const rateMap = await getFreshExchangeRates();
   let created = 0;
 
   for (const rule of dueRules) {

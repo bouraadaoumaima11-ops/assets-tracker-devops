@@ -3,10 +3,12 @@ import { timingSafeEqual } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { createSnapshot } from "@/lib/services/snapshot-service";
 import { refreshAllPrices } from "@/lib/services/price-service";
-import { refreshExchangeRates } from "@/lib/services/exchange-rate-service";
+import { getFreshExchangeRates, refreshExchangeRates } from "@/lib/services/exchange-rate-service";
+import { loadNetWorthInputsForUsers } from "@/lib/services/net-worth-service";
 import { materializeDueRecurringTransactions } from "@/lib/services/recurring-cash-service";
 import { materializeDueInvestments } from "@/lib/services/recurring-investment-service";
 import { taiwanCalendarDay } from "@/lib/app-day";
+import { chunk, mapSettled } from "@/lib/batch";
 import { ok, failure } from "@/lib/api-responses";
 import { CRON_SECRET } from "@/lib/env";
 import { log } from "@/lib/logger";
@@ -20,6 +22,18 @@ function hasValidCronSecret(authHeader: string | null): boolean {
 
 /** Name used for this cron's CronRun audit rows; E18's /api/health alarm keys on it. */
 const CRON_NAME = "snapshot";
+
+// Fan-out bounds for the sweep (#641). Each is a ceiling, not a target: a small
+// instance never reaches them, so nothing gets slower until the point where the
+// unbounded version would have fallen over.
+// ponytail: fixed numbers, not config — tune here if a real instance outgrows
+// them rather than adding env plumbing nobody sets.
+/** Concurrent external FX round-trips. Low: the source throttles by IP. */
+const RATE_REFRESH_CONCURRENCY = 5;
+/** Concurrent snapshot upserts. Bounds writes against the Neon pool. */
+const SNAPSHOT_CONCURRENCY = 10;
+/** Users whose accounts/holdings are held in memory at once. */
+const USER_PAGE_SIZE = 200;
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -96,10 +110,24 @@ export async function GET(request: Request) {
     log.info("cron.prices.refresh");
     // force: snapshots must be computed from current rates; the manual-refresh
     // freshness gate doesn't apply to the cron.
-    const [rateResults, priceResult] = await Promise.all([
-      Promise.all([...sourceCurrencies].map((c) => refreshExchangeRates(c, { force: true }))),
+    //
+    // Bounded concurrency (#641): every currency here is an external FX
+    // round-trip, and the count grows with the instance. Firing them all at once
+    // is what gets the source IP throttled, and a throttled source is worse than
+    // a slightly longer sweep — each call is capped at RATE_FETCH_TIMEOUT_MS, so
+    // the wall-clock cost of waves is bounded and small. Settled rather than
+    // all-or-nothing so one currency's failure can't abort the whole run.
+    const [rateSettled, priceResult] = await Promise.all([
+      mapSettled([...sourceCurrencies], RATE_REFRESH_CONCURRENCY, (c) =>
+        refreshExchangeRates(c, { force: true }),
+      ),
       refreshAllPrices(),
     ]);
+    const rateResults = rateSettled.flatMap((result) => {
+      if (result.status === "fulfilled") return [result.value];
+      log.warn("cron.rates.currency_failed", { error: String(result.reason) });
+      return [];
+    });
     const ratesUpdated = rateResults.reduce((sum, result) => sum + result.updated, 0);
     const ratesChanged = rateResults.reduce((sum, result) => sum + result.changed, 0);
     log.info("cron.revalidate.gate", {
@@ -148,32 +176,61 @@ export async function GET(request: Request) {
 
     // 2. Get all users and their settings
     const users = await prisma.user.findMany({
-      include: { appSettings: true },
+      select: { id: true, appSettings: { select: { baseCurrency: true } } },
     });
 
-    // 3. Create snapshots for each user (in parallel)
-    const snapshotResults = await Promise.allSettled(
-      users.map(async (user) => {
-        const baseCurrency = user.appSettings?.baseCurrency ?? "USD";
-        log.info("cron.snapshot.create", { userId: user.id, baseCurrency });
-        const snapshot = await createSnapshot(user.id, baseCurrency);
-        return { userId: user.id, snapshot };
-      }),
-    );
+    // 3. Snapshot every user.
+    //
+    // All reads are bulk (#641): the FX map is global so it is loaded once for
+    // the whole run, and each page of users costs one accounts+holdings query
+    // plus one price query — not three queries per user, unbounded in flight,
+    // which exhausted the connection pool and the 60 s budget as the instance
+    // grew. Paging also bounds how many users' holdings are held in memory.
+    //
+    // Everything here reads directly, never through a cached reader. The tag
+    // bumps above are stale-while-revalidate ("max"), so a cached net-worth read
+    // would persist the PREVIOUS cycle's prices/FX/balances and shift the whole
+    // history one day (#640).
+    const ratesMap = await getFreshExchangeRates();
     const snapshots: Awaited<ReturnType<typeof createSnapshot>>[] = [];
     const successfulUserIds: string[] = [];
     const failedUserIds: string[] = [];
-    for (let i = 0; i < snapshotResults.length; i++) {
-      const result = snapshotResults[i];
-      const userId = users[i].id;
-      if (result.status === "fulfilled") {
-        snapshots.push(result.value.snapshot);
-        successfulUserIds.push(result.value.userId);
-      } else {
-        failedUserIds.push(userId);
-        log.warn("cron.snapshot.user_failed", { userId, error: String(result.reason) });
+
+    for (const page of chunk(users, USER_PAGE_SIZE)) {
+      const inputs = await loadNetWorthInputsForUsers(
+        page.map((user) => user.id),
+        ratesMap,
+      );
+      // Only the upsert is left per user, so the cap here bounds concurrent
+      // writes rather than whole read-compute-write pipelines.
+      const pageResults = await mapSettled(page, SNAPSHOT_CONCURRENCY, async (user) => {
+        const baseCurrency = user.appSettings?.baseCurrency ?? "USD";
+        const snapshot = await createSnapshot(user.id, baseCurrency, {
+          fresh: true,
+          preloaded: inputs.get(user.id),
+        });
+        return { userId: user.id, snapshot };
+      });
+
+      for (let i = 0; i < pageResults.length; i++) {
+        const result = pageResults[i];
+        if (result.status === "fulfilled") {
+          snapshots.push(result.value.snapshot);
+          successfulUserIds.push(result.value.userId);
+        } else {
+          failedUserIds.push(page[i].id);
+          log.warn("cron.snapshot.user_failed", {
+            userId: page[i].id,
+            error: String(result.reason),
+          });
+        }
       }
     }
+    log.info("cron.snapshot.summary", {
+      users: users.length,
+      created: snapshots.length,
+      failed: failedUserIds.length,
+    });
     if (users.length > 0 && failedUserIds.length === users.length) {
       throw new Error(`Snapshot failed for users: ${failedUserIds.join(", ")}`);
     }

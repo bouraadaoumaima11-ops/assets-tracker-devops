@@ -122,6 +122,24 @@ export const getAllExchangeRates = cache(async (): Promise<Map<string, number>> 
 });
 
 /**
+ * Load ALL exchange rates straight from the DB, bypassing the Cache
+ * Components layer. Same "FROM_TO" → rate shape as `getAllExchangeRates`.
+ *
+ * For background jobs that write rates and then need to read them back in the
+ * same run: the cron revalidates `exchange-rates` with `"max"`, which is
+ * stale-while-revalidate, so `getAllExchangeRates` would hand back the
+ * pre-refresh map. Render paths should keep using the cached reader.
+ */
+export async function getFreshExchangeRates(): Promise<Map<string, number>> {
+  const rows = await prisma.exchangeRate.findMany({
+    select: { fromCurrency: true, toCurrency: true, rate: true },
+  });
+  const map = new Map<string, number>();
+  for (const r of rows) map.set(`${r.fromCurrency}_${r.toCurrency}`, Number(r.rate));
+  return map;
+}
+
+/**
  * Derive a cross rate via USD from already-known rates, e.g.
  * TWD→EUR = (USD→EUR) / (USD→TWD). The daily cron warms USD rates for
  * every in-use currency, so this resolves most pairs that lack a direct
@@ -307,8 +325,12 @@ export async function refreshExchangeRates(
   // multi-row upserts taking the same locks in different orders can deadlock.
   rows.sort(([aFrom, aTo], [bFrom, bTo]) => `${aFrom}_${aTo}`.localeCompare(`${bFrom}_${bTo}`));
 
+  // Two clauses, not one per pair: every row we are about to write has
+  // `baseCurrency` on one side or the other, so this covers all of them. The
+  // per-pair `OR` this replaced generated ~320 clauses per call (#641) — and the
+  // cron issues one call per currency in use.
   const currentRows = await prisma.exchangeRate.findMany({
-    where: { OR: rows.map(([fromCurrency, toCurrency]) => ({ fromCurrency, toCurrency })) },
+    where: { OR: [{ fromCurrency: baseCurrency }, { toCurrency: baseCurrency }] },
     select: { fromCurrency: true, toCurrency: true, rate: true },
   });
   const currentByPair = new Map(
