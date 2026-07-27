@@ -1,9 +1,7 @@
 import "server-only";
 import { cache } from "react";
-import { headers } from "next/headers";
 import { auth } from "@/auth";
-import { AUTH_SOURCE_HEADER, AUTH_SOURCE_PROXY, AUTH_USER_ID_HEADER } from "@/lib/auth-headers";
-import { getAuthUser, userExists } from "@/lib/auth-user";
+import { userExists } from "@/lib/auth-user";
 
 type AppSession = {
   user?: {
@@ -14,25 +12,14 @@ type AppSession = {
   };
 } | null;
 
-async function getTrustedProxyUserId(): Promise<string | null> {
-  const requestHeaders = await headers();
-  if (requestHeaders.get(AUTH_SOURCE_HEADER) !== AUTH_SOURCE_PROXY) return null;
-  const userId = requestHeaders.get(AUTH_USER_ID_HEADER);
-  return userId && userId.trim() ? userId : null;
-}
-
 /**
- * Cached session wrapper. Proxy validates the JWT once and forwards only a
- * server-written user id header; normal page renders can then skip a second
- * JWT decode while still confirming the user exists in the database.
+ * Cached session wrapper. Identity always comes from the signed session cookie
+ * via `auth()` — never from a request header, which a client can forge whenever
+ * the middleware does not run (see #639). React `cache()` keeps this to one JWT
+ * decode per request across all call sites, and the database check makes sure a
+ * stale cookie cannot render a signed-in shell.
  */
 export const getSession = cache(async (): Promise<AppSession> => {
-  const proxyUserId = await getTrustedProxyUserId();
-  if (proxyUserId) {
-    const user = await getAuthUser(proxyUserId);
-    return user ? { user } : null;
-  }
-
   const session = await auth();
   if (!session?.user?.id) return session;
 
