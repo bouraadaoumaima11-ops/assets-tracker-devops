@@ -29,8 +29,8 @@ class HoldingCurrencyMismatchError extends Error {
  * normal daily operation each occurrence is same-day, so this only affects
  * recovery after a cron outage.
  *
- * Price and FX are read DIRECTLY from the DB here (not via the cached
- * `getCachedPricesForSymbols` / `getAllExchangeRates`): the cron writes fresh
+ * Price and FX are read DIRECTLY from the DB here (not via a cached reader such
+ * as `getAllExchangeRates`): the cron writes fresh
  * prices/rates just before this runs but only revalidates the `prices` /
  * `exchange-rates` cache tags afterward, so the cached readers would return
  * pre-refresh values and the buys would use stale price/FX. The FX half of that

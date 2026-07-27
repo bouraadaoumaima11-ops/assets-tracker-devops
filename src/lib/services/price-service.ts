@@ -1,5 +1,5 @@
 import "server-only";
-import { revalidateTag, unstable_cache } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client";
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
@@ -392,32 +392,17 @@ export async function fetchCryptoPrices(
   return results;
 }
 
-// Fetch all cached prices once and hold in a single stable cache entry.
-// Using unstable_cache (not "use cache") so slow-query logs from Neon cold
-// starts are NOT replayed on cache hits.
-const fetchAllCachedPrices = unstable_cache(
-  async () => {
-    const results = await prisma.priceCache.findMany({
-      select: { symbol: true, price: true, currency: true },
-    });
-    return results.map((p) => ({
-      symbol: p.symbol,
-      price: Number(p.price),
-      currency: p.currency,
-    }));
-  },
-  ["all-prices"],
-  { tags: ["prices"], revalidate: 300 },
-);
-
-export async function getCachedPricesForSymbols(
-  symbols: string[],
-): Promise<{ symbol: string; price: number; currency: string }[]> {
-  if (symbols.length === 0) return [];
-  const all = await fetchAllCachedPrices();
-  const symbolSet = new Set(symbols);
-  return all.filter((p) => symbolSet.has(p.symbol));
-}
+// `getCachedPricesForSymbols` used to live here. It read the ENTIRE PriceCache
+// — every symbol of every user on the instance — and filtered down to one
+// user's holdings in JS, behind a cache entry tagged `prices`. That is the most
+// frequently invalidated tag in the codebase (every holding write, watchlist
+// add, manual refresh and cron run busts it, globally for all users), so the
+// full-table read re-ran on close to every /accounts render (#643).
+//
+// Its single caller now uses `account-service.getAccountPriceMap`, which was
+// already doing the scoped `symbol IN (...)` lookup for /accounts/[id] — the
+// same shape net-worth-service and stock-watch-service use. There is no reason
+// for a second way to read prices by symbol.
 
 export async function refreshAllPrices(): Promise<RefreshPricesResult> {
   const [holdings, trackedStocks] = await Promise.all([
