@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Net-worth computation is exercised through its public cached entry point.
 // We neutralize the caching wrappers (React cache(), Next "use cache" tags)
@@ -81,6 +81,8 @@ const h = vi.hoisted(() => ({
   accounts: [] as unknown[],
   prices: [] as { symbol: string; price: number; currency: string }[],
   rates: new Map<string, number>(),
+  /** Rows behind the direct `prisma.exchangeRate` read the fresh path uses. */
+  freshRates: new Map<string, number>(),
   warnings: [] as { msg: string; meta: unknown }[],
   tags: [] as string[],
 }));
@@ -106,6 +108,14 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     account: { findMany: vi.fn(async () => h.accounts) },
     priceCache: { findMany: vi.fn(async () => h.prices) },
+    exchangeRate: {
+      findMany: vi.fn(async () =>
+        [...h.freshRates].map(([key, rate]) => {
+          const [fromCurrency, toCurrency] = key.split("_");
+          return { fromCurrency, toCurrency, rate };
+        }),
+      ),
+    },
   },
 }));
 vi.mock("@/lib/services/exchange-rate-service", async (importActual) => {
@@ -113,7 +123,8 @@ vi.mock("@/lib/services/exchange-rate-service", async (importActual) => {
   return { ...actual, getAllExchangeRates: vi.fn(async () => h.rates) };
 });
 
-const { getCachedNetWorthSummary } = await import("@/lib/services/net-worth-service");
+const { getCachedNetWorthSummary, computeNetWorthSummary } =
+  await import("@/lib/services/net-worth-service");
 
 describe("getCachedNetWorthSummary (two-pass valuation)", () => {
   it("prices holdings, converts currencies, and splits assets vs. liabilities", async () => {
@@ -274,5 +285,57 @@ describe("getCachedNetWorthSummary (two-pass valuation)", () => {
 
     // 5 * 2 contracts * 100 multiplier = 1000.
     expect(summary.totalAssets).toBeCloseTo(1000);
+  });
+});
+
+// Regression #640: the snapshot cron writes prices/FX and materializes recurring
+// rows, then revalidates with `"max"` — stale-while-revalidate, so the cached
+// account + FX readers hand back pre-refresh values. The `fresh` path must go
+// straight to the DB for both.
+describe("computeNetWorthSummary({ fresh: true })", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.warnings = [];
+    h.tags = [];
+    h.prices = [];
+  });
+
+  it("takes FX from the direct DB read, not the cached rate map", async () => {
+    const { getAllExchangeRates } = await import("@/lib/services/exchange-rate-service");
+    h.rates = new Map([["USD_TWD", 1]]); // stale: pre-refresh 1:1
+    h.freshRates = new Map([["USD_TWD", 30]]); // post-refresh
+    h.accounts = [account({ id: "B", type: "ASSET", currency: "TWD", cashBalance: 3000 })];
+
+    const summary = await computeNetWorthSummary("u1", "USD", { fresh: true });
+
+    // 3000 TWD / 30 = 100. The stale 1:1 map would have valued it at 3000.
+    expect(summary.totalAssets).toBeCloseTo(100);
+    expect(vi.mocked(getAllExchangeRates)).not.toHaveBeenCalled();
+  });
+
+  it("enters no cached reader at all, so no cache tag is registered", async () => {
+    h.rates = new Map();
+    h.freshRates = new Map();
+    h.accounts = [account({ id: "A", type: "ASSET", currency: "USD", cashBalance: 100 })];
+
+    const summary = await computeNetWorthSummary("u1", "USD", { fresh: true });
+
+    expect(summary.totalAssets).toBeCloseTo(100);
+    // The cached account reader calls cacheTag("accounts"); the fresh query does
+    // not. An empty list proves neither `"use cache"` body ran.
+    expect(h.tags).toEqual([]);
+  });
+
+  it("still uses the cached readers when fresh is not requested", async () => {
+    const { getAllExchangeRates } = await import("@/lib/services/exchange-rate-service");
+    h.rates = new Map([["USD_TWD", 1]]);
+    h.freshRates = new Map([["USD_TWD", 30]]);
+    h.accounts = [account({ id: "B", type: "ASSET", currency: "TWD", cashBalance: 3000 })];
+
+    const summary = await computeNetWorthSummary("u1", "USD");
+
+    expect(summary.totalAssets).toBeCloseTo(3000); // stale 1:1 map
+    expect(vi.mocked(getAllExchangeRates)).toHaveBeenCalled();
+    expect(h.tags).toContain("accounts");
   });
 });

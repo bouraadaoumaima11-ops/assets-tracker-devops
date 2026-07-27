@@ -227,6 +227,28 @@ describe("snapshot cron route", () => {
     expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "error");
   });
 
+  // Regression #640: the tag bumps above are `"max"` (stale-while-revalidate),
+  // so a cached net-worth read here would persist the previous cycle's numbers.
+  // The cron must ask createSnapshot for the uncached computation.
+  it("asks for a fresh (uncached) summary when creating each snapshot", async () => {
+    h.users = [
+      { id: "user1", appSettings: { baseCurrency: "USD" } },
+      { id: "user2", appSettings: { baseCurrency: "TWD" } },
+    ];
+    const { GET } = await import("@/app/api/cron/snapshot/route");
+    const { createSnapshot } = await import("@/lib/services/snapshot-service");
+
+    const response = await GET(
+      new Request("http://unit.test/api/cron/snapshot", {
+        headers: { authorization: "Bearer test-secret" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith("user1", "USD", { fresh: true });
+    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith("user2", "TWD", { fresh: true });
+  });
+
   it("materializes recurring rules for the Taiwan calendar day", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-05T21:30:00.000Z")); // 07-06 05:30 Taipei
