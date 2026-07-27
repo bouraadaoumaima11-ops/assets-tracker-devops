@@ -65,6 +65,78 @@ export const fetchUserArchivedAccountsWithHoldings = cache(
   fetchUserArchivedAccountsWithHoldingsInner,
 );
 
+/** Price rows keyed by symbol, in whatever currency the provider quoted. */
+type PriceMap = Record<string, { price: number; currency: string }>;
+
+async function queryPriceMap(symbols: string[]): Promise<PriceMap> {
+  if (symbols.length === 0) return {};
+  const prices = await prisma.priceCache.findMany({
+    where: { symbol: { in: [...new Set(symbols)] } },
+    select: { symbol: true, price: true, currency: true },
+  });
+  return Object.fromEntries(
+    prices.map((p) => [p.symbol, { price: Number(p.price), currency: p.currency }]),
+  );
+}
+
+/**
+ * Everything `computeNetWorthSummary` needs from the database for ONE user.
+ * Pass it when a caller has already loaded these in bulk — see
+ * `loadNetWorthInputsForUsers`.
+ */
+export type NetWorthInputs = {
+  accounts: SerializedAccountWithHoldings[];
+  ratesMap: Map<string, number>;
+  priceMap: PriceMap;
+};
+
+/**
+ * Bulk-load net-worth inputs for MANY users in a fixed number of queries
+ * (two, plus one shared rate map), instead of three per user.
+ *
+ * The snapshot cron used to call `computeNetWorthSummary` once per user, so its
+ * database round-trips grew linearly with the instance and ran with no
+ * concurrency bound — the pool-exhaustion half of #641. Everything here is read
+ * directly (no `"use cache"`), so the result is fresh by construction, which is
+ * what the cron needs after it refreshes prices/FX (#640).
+ *
+ * `ratesMap` is passed in rather than fetched: it is global, so the caller loads
+ * it once for the whole run instead of once per user or per page.
+ */
+export async function loadNetWorthInputsForUsers(
+  userIds: string[],
+  ratesMap: Map<string, number>,
+): Promise<Map<string, NetWorthInputs>> {
+  const byUser = new Map<string, NetWorthInputs>();
+  if (userIds.length === 0) return byUser;
+
+  const raw = await prisma.account.findMany({
+    where: { userId: { in: userIds }, isActive: true },
+    include: { holdings: { where: { quantity: { gt: 0 } } } },
+    // Same ordering as the single-user query. Bucketing below preserves it
+    // within each user, so per-user account order is unchanged.
+    orderBy: [{ isPinned: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+  });
+
+  const accountsByUser = new Map<string, SerializedAccountWithHoldings[]>();
+  for (const account of raw) {
+    const list = accountsByUser.get(account.userId);
+    if (list) list.push(serializeAccountWithHoldings(account));
+    else accountsByUser.set(account.userId, [serializeAccountWithHoldings(account)]);
+  }
+
+  const priceMap = await queryPriceMap(
+    raw.flatMap((account) => account.holdings.map((h) => h.symbol)),
+  );
+
+  // Users with no active accounts still get an entry, so callers snapshot them
+  // (a zeroed row) exactly as the per-user path did.
+  for (const userId of userIds) {
+    byUser.set(userId, { accounts: accountsByUser.get(userId) ?? [], ratesMap, priceMap });
+  }
+  return byUser;
+}
+
 /**
  * Uncached net-worth computation.
  *
@@ -77,33 +149,32 @@ export const fetchUserArchivedAccountsWithHoldings = cache(
  * (#640). Same reasoning as the direct price/FX reads in
  * `recurring-investment-service`. PriceCache below is already read directly, so
  * the price leg needs no switch. Render paths keep the cached readers.
+ *
+ * `preloaded` short-circuits all three reads for callers that already loaded
+ * them in bulk (#641). It must carry fresh data, so pass it together with
+ * `fresh` to keep the intent legible at the call site.
  */
 export async function computeNetWorthSummary(
   userId: string,
   baseCurrency: string,
-  opts: { fresh?: boolean } = {},
+  opts: { fresh?: boolean; preloaded?: NetWorthInputs } = {},
 ): Promise<NetWorthSummary> {
   // Load accounts and exchange rates in parallel.
   // On the cached path both are React-cached, so if DashboardContent already
   // fired these calls without awaiting, we get the memoised results for free.
-  const [accounts, allRatesMap] = await Promise.all([
-    opts.fresh ? queryActiveAccountsWithHoldings(userId) : fetchUserAccountsWithHoldings(userId),
-    opts.fresh ? getFreshExchangeRates() : getAllExchangeRates(),
-  ]);
+  const [accounts, allRatesMap] = opts.preloaded
+    ? [opts.preloaded.accounts, opts.preloaded.ratesMap]
+    : await Promise.all([
+        opts.fresh
+          ? queryActiveAccountsWithHoldings(userId)
+          : fetchUserAccountsWithHoldings(userId),
+        opts.fresh ? getFreshExchangeRates() : getAllExchangeRates(),
+      ]);
 
   // Phase 2: fetch only the prices needed for this user's holdings
-  const userSymbols = accounts.flatMap((a) => a.holdings.map((h) => h.symbol));
-  const prices =
-    userSymbols.length > 0
-      ? await prisma.priceCache.findMany({
-          where: { symbol: { in: userSymbols } },
-          select: { symbol: true, price: true, currency: true },
-        })
-      : [];
-
-  const priceMap = Object.fromEntries(
-    prices.map((p) => [p.symbol, { price: Number(p.price), currency: p.currency }]),
-  );
+  const priceMap =
+    opts.preloaded?.priceMap ??
+    (await queryPriceMap(accounts.flatMap((a) => a.holdings.map((h) => h.symbol))));
 
   let totalAssets = 0;
   let totalLiabilities = 0;

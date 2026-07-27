@@ -325,8 +325,12 @@ export async function refreshExchangeRates(
   // multi-row upserts taking the same locks in different orders can deadlock.
   rows.sort(([aFrom, aTo], [bFrom, bTo]) => `${aFrom}_${aTo}`.localeCompare(`${bFrom}_${bTo}`));
 
+  // Two clauses, not one per pair: every row we are about to write has
+  // `baseCurrency` on one side or the other, so this covers all of them. The
+  // per-pair `OR` this replaced generated ~320 clauses per call (#641) — and the
+  // cron issues one call per currency in use.
   const currentRows = await prisma.exchangeRate.findMany({
-    where: { OR: rows.map(([fromCurrency, toCurrency]) => ({ fromCurrency, toCurrency })) },
+    where: { OR: [{ fromCurrency: baseCurrency }, { toCurrency: baseCurrency }] },
     select: { fromCurrency: true, toCurrency: true, rate: true },
   });
   const currentByPair = new Map(

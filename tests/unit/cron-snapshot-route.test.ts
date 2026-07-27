@@ -6,6 +6,14 @@ const h = vi.hoisted(() => ({
   optionSweepGuardFails: false,
   users: [{ id: "user1", appSettings: { baseCurrency: "USD" } }],
   snapshotFailures: new Set<string>(),
+  /** #641 — how many times the global FX map was loaded across the whole run. */
+  rateMapLoads: 0,
+  /** #641 — one entry per bulk input load, holding that page's user ids. */
+  inputLoads: [] as string[][],
+  /** Opts each createSnapshot call received, to prove preloaded inputs are used. */
+  snapshotOpts: [] as unknown[],
+  rateRefreshes: [] as string[],
+  rateRefreshFailures: new Set<string>(),
 }));
 
 vi.mock("@/lib/env", () => ({
@@ -28,7 +36,22 @@ vi.mock("@/lib/sentry-cron", () => ({
 }));
 
 vi.mock("@/lib/services/exchange-rate-service", () => ({
-  refreshExchangeRates: vi.fn(async () => ({ updated: 0, changed: 0 })),
+  refreshExchangeRates: vi.fn(async (currency: string) => {
+    h.rateRefreshes.push(currency);
+    if (h.rateRefreshFailures.has(currency)) throw new Error(`rate refresh failed for ${currency}`);
+    return { updated: 0, changed: 0 };
+  }),
+  getFreshExchangeRates: vi.fn(async () => {
+    h.rateMapLoads += 1;
+    return new Map<string, number>();
+  }),
+}));
+
+vi.mock("@/lib/services/net-worth-service", () => ({
+  loadNetWorthInputsForUsers: vi.fn(async (userIds: string[]) => {
+    h.inputLoads.push(userIds);
+    return new Map(userIds.map((id) => [id, { accounts: [], ratesMap: new Map(), priceMap: {} }]));
+  }),
 }));
 
 vi.mock("@/lib/services/price-service", () => ({
@@ -44,8 +67,9 @@ vi.mock("@/lib/services/recurring-investment-service", () => ({
 }));
 
 vi.mock("@/lib/services/snapshot-service", () => ({
-  createSnapshot: vi.fn(async (userId: string) => {
+  createSnapshot: vi.fn(async (userId: string, _baseCurrency: string, opts?: unknown) => {
     h.events.push(`snapshot:${userId}`);
+    h.snapshotOpts.push(opts);
     if (h.snapshotFailures.has(userId)) throw new Error(`snapshot failed for ${userId}`);
     return { id: `snapshot-${userId}` };
   }),
@@ -92,6 +116,11 @@ describe("snapshot cron route", () => {
     h.optionSweepGuardFails = false;
     h.users = [{ id: "user1", appSettings: { baseCurrency: "USD" } }];
     h.snapshotFailures = new Set();
+    h.rateMapLoads = 0;
+    h.inputLoads = [];
+    h.snapshotOpts = [];
+    h.rateRefreshes = [];
+    h.rateRefreshFailures = new Set();
   });
 
   it("invalidates net worth before snapshot creation when options expire", async () => {
@@ -245,8 +274,85 @@ describe("snapshot cron route", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith("user1", "USD", { fresh: true });
-    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith("user2", "TWD", { fresh: true });
+    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith(
+      "user1",
+      "USD",
+      expect.objectContaining({ fresh: true }),
+    );
+    expect(vi.mocked(createSnapshot)).toHaveBeenCalledWith(
+      "user2",
+      "TWD",
+      expect.objectContaining({ fresh: true }),
+    );
+    // The bulk loader reads directly (no `"use cache"`), so preloaded inputs are
+    // fresh by construction — but they must actually be handed over, or
+    // createSnapshot silently falls back to per-user queries.
+    for (const opts of h.snapshotOpts) {
+      expect(opts).toHaveProperty("preloaded");
+      expect((opts as { preloaded?: unknown }).preloaded).toBeDefined();
+    }
+  });
+
+  // Regression #641: reads used to be per-user and unbounded in flight, so the
+  // cron's round-trips grew linearly with the instance and exhausted the pool.
+  describe("bulk loading (#641)", () => {
+    const manyUsers = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        id: `user${i}`,
+        appSettings: { baseCurrency: "USD" },
+      }));
+
+    it("loads the global FX map once for the whole run, not once per user", async () => {
+      h.users = manyUsers(25);
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+
+      const response = await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(h.rateMapLoads).toBe(1);
+    });
+
+    it("bulk-loads net-worth inputs once per page, covering every user exactly once", async () => {
+      h.users = manyUsers(25);
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+
+      await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      // 25 users fit in one page (USER_PAGE_SIZE = 200), so one load — the point
+      // is that it is a fixed count, not 25.
+      expect(h.inputLoads).toHaveLength(1);
+      expect(h.inputLoads.flat()).toEqual(h.users.map((u) => u.id));
+      expect(h.events.filter((e) => e.startsWith("snapshot:"))).toHaveLength(25);
+    });
+
+    it("keeps sweeping when one currency's rate refresh throws", async () => {
+      h.rateRefreshFailures = new Set(["USD"]);
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+      const { log } = await import("@/lib/logger");
+
+      const response = await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      // Previously a single rejected currency aborted the entire run via
+      // Promise.all, losing that day's snapshot for everyone.
+      expect(response.status).toBe(200);
+      expect(h.events).toContain("snapshot:user1");
+      expect(log.warn).toHaveBeenCalledWith(
+        "cron.rates.currency_failed",
+        expect.objectContaining({ error: expect.stringContaining("USD") }),
+      );
+    });
   });
 
   it("materializes recurring rules for the Taiwan calendar day", async () => {
