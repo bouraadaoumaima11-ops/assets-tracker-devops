@@ -1,6 +1,10 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { computeNetWorthSummary, getCachedNetWorthSummary } from "./net-worth-service";
+import {
+  computeNetWorthSummary,
+  getCachedNetWorthSummary,
+  type NetWorthInputs,
+} from "./net-worth-service";
 import { taiwanCalendarDay } from "@/lib/app-day";
 
 /**
@@ -13,15 +17,23 @@ import { taiwanCalendarDay } from "@/lib/app-day";
  * cached summary (tagged with exactly those tags) serves the PREVIOUS cycle's
  * numbers while the fresh value loads in the background. Snapshotting that read
  * shifted the whole persisted history one day (#640).
+ *
+ * `preloaded` carries inputs the caller already bulk-loaded, so a multi-user
+ * sweep costs a fixed number of queries instead of three per user (#641). It
+ * only changes where the data comes from, never the arithmetic.
  */
 export async function createSnapshot(
   userId: string,
   baseCurrency: string,
-  opts: { fresh?: boolean } = {},
+  opts: { fresh?: boolean; preloaded?: NetWorthInputs } = {},
 ) {
-  const summary = opts.fresh
-    ? await computeNetWorthSummary(userId, baseCurrency, { fresh: true })
-    : await getCachedNetWorthSummary(userId, baseCurrency);
+  const summary =
+    opts.fresh || opts.preloaded
+      ? await computeNetWorthSummary(userId, baseCurrency, {
+          fresh: true,
+          preloaded: opts.preloaded,
+        })
+      : await getCachedNetWorthSummary(userId, baseCurrency);
   const snapshotTakenAt = new Date();
   // The cron fires at 21:30 UTC = 05:30 Taiwan time (#49) so the run lands just
   // after midnight local. Floor to the *Taiwan* calendar day (shift +8h before
