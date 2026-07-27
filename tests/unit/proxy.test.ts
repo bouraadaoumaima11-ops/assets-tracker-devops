@@ -1,6 +1,12 @@
 import { NextRequest } from "next/server";
 import type { NextFetchEvent } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { authMock, userExistsMock, headersMock } = vi.hoisted(() => ({
+  authMock: vi.fn(),
+  userExistsMock: vi.fn(),
+  headersMock: vi.fn(),
+}));
 
 vi.mock("next-auth", () => ({
   default: () => ({
@@ -9,8 +15,12 @@ vi.mock("next-auth", () => ({
 }));
 
 vi.mock("../../src/auth.config", () => ({ default: {} }));
+vi.mock("@/auth", () => ({ auth: authMock }));
+vi.mock("@/lib/auth-user", () => ({ userExists: userExistsMock }));
+vi.mock("next/headers", () => ({ headers: headersMock }));
 
-import proxy from "@/proxy";
+import proxy, { config } from "@/proxy";
+import { getSession } from "@/lib/auth-session";
 
 const TUNNEL_PATH = "/a1b2c3d4";
 
@@ -46,6 +56,98 @@ describe("Sentry tunnel proxy bypass", () => {
 
     expect(response.headers.get("x-middleware-next")).toBeNull();
     expect(response.headers.get("location")).toBe("https://astt.app/login");
+  });
+});
+
+// Regression cover for #639: the matcher's bot-probe exclusions carried a
+// leading `.*`, and JS `.` matches `/`, so any path containing `.env`/`.php`/…
+// skipped the middleware — including real dynamic routes like /accounts/x.env.
+describe("middleware matcher covers dynamic routes (#639)", () => {
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
+
+  it.each(["clx123", "x.env", "x.php", "x.git", "x.htaccess"])(
+    "matches /accounts/%s so the middleware always runs",
+    (accountId) => {
+      expect(matcher.test(`/accounts/${accountId}`)).toBe(true);
+    },
+  );
+
+  it("uses no segment-spanning exclusion token", () => {
+    expect(config.matcher[0]).not.toContain(".*\\.");
+  });
+
+  it.each([
+    "/sw.js",
+    "/manifest.webmanifest",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/favicon.ico",
+    "/login",
+    "/privacy",
+    "/terms",
+    "/_next/static/chunk.js",
+    "/api/accounts",
+  ])("still excludes the non-routable or public path %s", (pathname) => {
+    expect(matcher.test(pathname)).toBe(false);
+  });
+});
+
+describe("bot probe filtering inside the middleware", () => {
+  it.each(["/wp-admin", "/xmlrpc.php", "/x.php", "/.env", "/vendor/phpunit/run"])(
+    "passes the probe %s through to routing instead of redirecting to login",
+    (pathname) => {
+      const response = executeAnonymousRequest(pathname);
+
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+      expect(response.headers.get("location")).toBeNull();
+    },
+  );
+
+  it("does not mistake a dotted dynamic account id for a bot probe", () => {
+    const response = executeAnonymousRequest("/accounts/x.env");
+
+    expect(response.headers.get("location")).toBe("https://astt.app/login");
+  });
+});
+
+describe("getSession identity source (#639)", () => {
+  const VICTIM_ID = "clvictim000000000000000";
+
+  beforeEach(() => {
+    authMock.mockReset();
+    userExistsMock.mockReset();
+    headersMock.mockReset();
+    headersMock.mockResolvedValue(
+      new Headers({
+        "x-asset-auth-source": "proxy",
+        "x-asset-user-id": VICTIM_ID,
+      }),
+    );
+  });
+
+  it("returns no session for forged proxy identity headers without a session cookie", async () => {
+    authMock.mockResolvedValue(null);
+
+    await expect(getSession()).resolves.toBeNull();
+
+    expect(userExistsMock).not.toHaveBeenCalledWith(VICTIM_ID);
+  });
+
+  it("never reads request headers to establish identity", async () => {
+    authMock.mockResolvedValue(null);
+
+    await getSession();
+
+    expect(headersMock).not.toHaveBeenCalled();
+  });
+
+  it("still resolves the cookie-backed session from auth()", async () => {
+    const session = { user: { id: "clowner0000000000000000", email: "owner@example.com" } };
+    authMock.mockResolvedValue(session);
+    userExistsMock.mockResolvedValue(true);
+
+    await expect(getSession()).resolves.toEqual(session);
+    expect(userExistsMock).toHaveBeenCalledWith(session.user.id);
   });
 });
 

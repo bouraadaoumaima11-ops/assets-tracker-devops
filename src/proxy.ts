@@ -1,6 +1,5 @@
 import NextAuth from "next-auth";
 import authConfig from "./auth.config";
-import { AUTH_SOURCE_HEADER, AUTH_SOURCE_PROXY, AUTH_USER_ID_HEADER } from "@/lib/auth-headers";
 import { SESSION_COOKIE_NAMES } from "@/lib/auth-cookies";
 import { getClientIp } from "@/lib/rate-limit";
 import { NextResponse } from "next/server";
@@ -14,27 +13,51 @@ function hasSessionCookie(req: NextRequest): boolean {
   return SESSION_COOKIE_NAMES.some((name) => req.cookies.has(name));
 }
 
-function requestHeadersForApp(req: NextRequest, userId?: string): Headers {
-  const requestHeaders = new Headers(req.headers);
-  requestHeaders.delete(AUTH_USER_ID_HEADER);
-  requestHeaders.delete(AUTH_SOURCE_HEADER);
-
-  if (userId) {
-    requestHeaders.set(AUTH_USER_ID_HEADER, userId);
-    requestHeaders.set(AUTH_SOURCE_HEADER, AUTH_SOURCE_PROXY);
-  }
-
-  return requestHeaders;
-}
-
-function nextResponse(req: NextRequest, userId?: string): NextResponse {
-  const response = NextResponse.next({
-    request: {
-      headers: requestHeadersForApp(req, userId),
-    },
-  });
+function nextResponse(req: NextRequest): NextResponse {
+  const response = NextResponse.next();
   setLocaleCookie(req, response);
   return response;
+}
+
+// Bot/scanner probes observed in production logs and in the wild. These used to
+// be excluded in `matcher`, but the extension tokens there carried a leading
+// `.*` and JS `.` matches `/`, so a probe token anywhere in the path skipped the
+// middleware entirely — including on real dynamic routes like /accounts/x.env
+// (#639). Filtering here keeps the check anchored to the first path segment, so
+// it can never swallow a dynamic segment deeper in the path.
+const BOT_PATH_PREFIXES = [
+  "wp-admin",
+  "wp-login",
+  "wp-content",
+  "wp-includes",
+  "wordpress",
+  "xmlrpc",
+  "cgi-bin",
+  "cmd_",
+  "phpmyadmin",
+  "adminer",
+  "vendor/phpunit",
+];
+
+const BOT_FILE_TOKENS = [
+  ".php",
+  ".asp",
+  ".aspx",
+  ".jsp",
+  ".cgi",
+  ".env",
+  ".git",
+  ".svn",
+  ".htaccess",
+  ".htpasswd",
+];
+
+function isBotProbe(pathname: string): boolean {
+  const path = pathname.replace(/^\/+/, "").toLowerCase();
+  if (BOT_PATH_PREFIXES.some((prefix) => path.startsWith(prefix))) return true;
+
+  const firstSegment = path.split("/", 1)[0];
+  return BOT_FILE_TOKENS.some((token) => firstSegment.includes(token));
 }
 
 // ---------------------------------------------------------------------------
@@ -114,7 +137,7 @@ const authMiddleware = auth((req) => {
     return Response.redirect(newUrl);
   }
 
-  return nextResponse(req, req.auth?.user?.id);
+  return nextResponse(req);
 });
 
 export default function middleware(req: NextRequest, event: NextFetchEvent) {
@@ -130,9 +153,16 @@ export default function middleware(req: NextRequest, event: NextFetchEvent) {
     return;
   }
 
+  // Bot probes get routing's own 404 rather than a /login redirect, and never
+  // pay for NextAuth work. This check lives here, not in `matcher`, so that
+  // every app path is matched and no route can opt itself out of the middleware.
+  if (isBotProbe(req.nextUrl.pathname)) {
+    return NextResponse.next();
+  }
+
   // P4 fast path: no session cookie means the request is anonymous — decide
   // redirect vs. pass-through from the cookie header alone, without invoking
-  // NextAuth's JWT decode. Bot traffic that survives the matcher lands here.
+  // NextAuth's JWT decode.
   if (!hasSessionCookie(req)) {
     if (!PUBLIC_ROUTES.includes(req.nextUrl.pathname)) {
       return Response.redirect(new URL("/login", req.nextUrl.origin));
@@ -149,7 +179,9 @@ export default function middleware(req: NextRequest, event: NextFetchEvent) {
   );
 }
 
-// Negative-lookahead exclusions:
+// Negative-lookahead exclusions. Every token here is a fixed, non-routable
+// asset or public page anchored at position 1 — nothing uses a leading `.*`, so
+// no exclusion can span path segments and quietly skip a routable app page:
 //   - Next/Vercel internals + cron + file-based metadata (already excluded before P1).
 //   - robots.txt / sitemap.xml served from `public/`.
 //   - PWA assets sw.js + manifest.webmanifest: the browser fetches these without
@@ -157,16 +189,10 @@ export default function middleware(req: NextRequest, event: NextFetchEvent) {
 //     installability check fails and the install prompt never appears.
 //   - Public login/legal pages, so they can render without NextAuth cookie work.
 //     The signed-in /login redirect lives in the login page itself.
-//   - Common bot/scanner probes observed in production logs and in the wild:
-//     wp-admin/wp-login/wp-content/wp-includes/wordpress, xmlrpc, cgi-bin,
-//     phpmyadmin/adminer, cmd_*, vendor/phpunit, plus any path containing
-//     .php/.asp/.aspx/.jsp/.cgi/.env/.git/.svn/.htaccess/.htpasswd.
-// Bot tokens are anchored at position 1 (no leading `.*`) so we don't
-// accidentally skip legitimate routes that happen to contain these
-// substrings deeper in the path; extension/dotfile tokens use `.*` so any
-// component carrying them is excluded.
+// Bot/scanner probes are NOT excluded here — they are filtered by `isBotProbe`
+// inside `middleware()` above, so every app path reaches the middleware (#639).
 export const config = {
   matcher: [
-    "/((?!api/(?!auth)|_next/static|_next/image|_vercel|favicon\\.ico|sw\\.js|manifest\\.webmanifest|apple-icon|icon|opengraph-image|twitter-image|robots\\.txt|sitemap\\.xml|login|privacy|terms|wp-admin|wp-login|wp-content|wp-includes|wordpress|xmlrpc|cgi-bin|cmd_|phpmyadmin|adminer|vendor/phpunit|.*\\.php|.*\\.aspx?|.*\\.jsp|.*\\.cgi|.*\\.env|.*\\.git|.*\\.svn|.*\\.htaccess|.*\\.htpasswd).*)",
+    "/((?!api/(?!auth)|_next/static|_next/image|_vercel|favicon\\.ico|sw\\.js|manifest\\.webmanifest|apple-icon|icon|opengraph-image|twitter-image|robots\\.txt|sitemap\\.xml|login|privacy|terms).*)",
   ],
 };
