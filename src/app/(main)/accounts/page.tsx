@@ -12,7 +12,7 @@ import {
   fetchUserArchivedAccountsWithHoldings,
   getCachedNetWorthSummary,
 } from "@/lib/services/net-worth-service";
-import { getCachedPricesForSymbols } from "@/lib/services/price-service";
+import { getAccountPriceMap } from "@/lib/services/account-service";
 import { log } from "@/lib/logger";
 
 const CLIENT_NAMESPACES = [
@@ -36,7 +36,7 @@ async function AccountsContent() {
   // settings/accounts reads rather than blocking the whole batch.
   const settingsP = getOrCreateSettings(userId);
   const accountsP = fetchUserAccountsWithHoldings(userId);
-  const [t, messages, accounts, archivedAccounts, settings, allRatesMap, summary, cachedPrices] =
+  const [t, messages, accounts, archivedAccounts, settings, allRatesMap, summary, priceMap] =
     await Promise.all([
       getTranslations("accounts"),
       getMessages(),
@@ -45,20 +45,18 @@ async function AccountsContent() {
       settingsP,
       getAllExchangeRates(),
       settingsP.then((s) => getCachedNetWorthSummary(userId, s.baseCurrency)),
+      // Scoped `symbol IN (...)`, the same helper /accounts/[id] uses. The call
+      // this replaced read the whole PriceCache table and filtered in JS (#643).
+      // Symbol set is unchanged — active accounts only — so archived-only
+      // holdings stay unpriced here exactly as they were before.
       accountsP.then((accounts) =>
-        getCachedPricesForSymbols([
-          ...new Set(accounts.flatMap((a) => a.holdings.map((h) => h.symbol))),
-        ]),
+        getAccountPriceMap(accounts.flatMap((a) => a.holdings.map((h) => h.symbol))),
       ),
     ]);
 
   const baseCurrency = settings.baseCurrency;
   const hasAssetAccounts = summary.accounts.some(
     (account) => account.type === "ASSET" && account.totalValueInBaseCurrency > 0,
-  );
-
-  const priceMap: Record<string, number> = Object.fromEntries(
-    cachedPrices.map((p) => [p.symbol, p.price]),
   );
 
   // Build rates map from the bulk-loaded rates. Render path is read-only
