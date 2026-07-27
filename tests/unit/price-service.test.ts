@@ -15,7 +15,13 @@ vi.mock("@/lib/logger", () => ({
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
   withTiming: <T>(_: string, fn: () => Promise<T>) => fn(),
 }));
-vi.mock("@/lib/services/yahoo-client");
+// Partial mock: only the client factory is stubbed. `getYahooErrorStatus` must
+// stay real because price-service reads the upstream HTTP status through it to
+// classify 429s, and a blanket auto-mock would make every status `undefined`.
+vi.mock("@/lib/services/yahoo-client", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/services/yahoo-client")>()),
+  getYahooClient: vi.fn(),
+}));
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
   unstable_cache: <T extends (...args: unknown[]) => unknown>(fn: T) => fn,
@@ -218,4 +224,172 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(releasedSymbols).toContain("MSFT");
     expect(releasedSymbols).not.toContain("AAPL");
   });
+});
+
+// --- Batching / fan-out control (issue #642) -------------------------------
+// Numbers below mirror the constants in price-service.ts: chunk size 50, 3
+// chunks in flight, 4 per-symbol fallback requests in flight.
+
+/** No PriceCache rows => every symbol is "stale new", so the claim UPDATE is
+ *  skipped and the whole list goes to the fetcher. */
+function stubAllSymbolsFetchable() {
+  vi.mocked(prisma.priceCache.findMany).mockResolvedValue([] as never);
+  vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1 as never);
+}
+
+const quoteFor = (symbol: string) => ({ symbol, regularMarketPrice: 100, currency: "USD" });
+
+describe("fetchYahooQuotes — request chunking and bounded concurrency", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("splits a multi-chunk symbol list into several quote calls, none over the chunk size", async () => {
+    stubAllSymbolsFetchable();
+    const symbols = Array.from({ length: 120 }, (_, i) => `SYM${i}`);
+    const quote = vi.fn(async (syms: string[]) => syms.map(quoteFor));
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(symbols);
+
+    expect(result.updated).toBe(120);
+    // 120 symbols at a chunk size of 50 => 50 + 50 + 20
+    expect(quote).toHaveBeenCalledTimes(3);
+    for (const [syms] of quote.mock.calls) {
+      expect(syms.length).toBeLessThanOrEqual(50);
+    }
+    // Every symbol is still requested, exactly once, across the chunks
+    expect(quote.mock.calls.flatMap(([syms]) => syms).sort()).toEqual([...symbols].sort());
+  });
+
+  it("holds chunk requests at the concurrency cap without serialising them", async () => {
+    stubAllSymbolsFetchable();
+    const symbols = Array.from({ length: 250 }, (_, i) => `SYM${i}`); // 5 chunks
+    let inFlight = 0;
+    let peak = 0;
+    const quote = vi.fn(async (syms: string[]) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return syms.map(quoteFor);
+    });
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    expect((await refreshPricesForStockSymbols(symbols)).updated).toBe(250);
+    expect(quote).toHaveBeenCalledTimes(5);
+    expect(peak).toBeLessThanOrEqual(3); // never exceeds the cap
+    expect(peak).toBeGreaterThanOrEqual(3); // ...and reaches it, so the pool really overlaps
+  });
+
+  it("falls back per-symbol only for the chunk that failed, within the fallback cap", async () => {
+    stubAllSymbolsFetchable();
+    const symbols = Array.from({ length: 120 }, (_, i) => `SYM${i}`);
+    const failingChunk = symbols.slice(50, 100); // the middle chunk
+    const poison = "SYM60";
+    let inFlight = 0;
+    let peak = 0;
+    const quote = vi.fn(async (syms: string[]) => {
+      if (syms.length > 1) {
+        if (syms.includes(poison)) throw new Error("Quote not found for symbol");
+        return syms.map(quoteFor);
+      }
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      inFlight--;
+      if (syms[0] === poison) throw new Error("Quote not found for symbol");
+      return syms.map(quoteFor);
+    });
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(symbols);
+
+    const perSymbol = quote.mock.calls
+      .filter(([syms]) => syms.length === 1)
+      .map(([syms]) => syms[0]);
+    // The other 70 symbols are never dragged into the per-symbol path
+    expect(perSymbol.sort()).toEqual([...failingChunk].sort());
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThanOrEqual(4);
+    // 50 + 20 from the healthy chunks, plus 49 of 50 recovered from the failed one
+    expect(result.updated).toBe(119);
+  });
+
+  it("keeps prices from the chunks that succeeded when another chunk fails outright", async () => {
+    stubAllSymbolsFetchable();
+    const symbols = Array.from({ length: 120 }, (_, i) => `SYM${i}`);
+    const failingChunk = new Set(symbols.slice(50, 100));
+    // Every call touching the middle chunk fails, batch or per-symbol
+    const quote = vi.fn(async (syms: string[]) => {
+      if (syms.some((s) => failingChunk.has(s))) throw new Error("upstream unavailable");
+      return syms.map(quoteFor);
+    });
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(symbols);
+
+    // 50 from the first chunk + 20 from the last survive the middle chunk's loss
+    expect(result.updated).toBe(70);
+    const perSymbol = quote.mock.calls
+      .filter(([syms]) => syms.length === 1)
+      .map(([syms]) => syms[0]);
+    expect(perSymbol).toHaveLength(50);
+    expect(perSymbol.every((s) => failingChunk.has(s))).toBe(true);
+  });
+});
+
+describe("fetchYahooQuotes — a rate limit is not amplified by the retry ladder", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Long timeouts so that on the pre-fix code these fail on the call-count
+  // assertion rather than on the ~4 s of retry backoff they would sit through.
+  it("does not retry a 429 reported through the error's numeric code", async () => {
+    stubAllSymbolsFetchable();
+    // yahoo-finance2's HTTPError shape. The message deliberately carries no 429
+    // text, only tokens the retryable-error test matches ("fetch failed", 503),
+    // so the rate limit is recognised solely from `code`.
+    const rateLimited = Object.assign(new Error("edge fetch failed (backend 503)"), { code: 429 });
+    const quote = vi.fn().mockRejectedValue(rateLimited);
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    // Exactly one attempt: no retry ladder, and no per-symbol fallback for a
+    // chunk that is already a single symbol.
+    expect(quote).toHaveBeenCalledTimes(1);
+    expect(result.updated).toBe(0);
+  }, 20_000);
+
+  it("does not retry a 429 reported only in the message text", async () => {
+    stubAllSymbolsFetchable();
+    // No numeric code — just the wire text, whose Retry-After hint contains a
+    // 5xx-looking token that the bare /\b5\d\d\b/ test would treat as retryable.
+    const quote = vi
+      .fn()
+      .mockRejectedValue(new Error("Request failed: 429 Too Many Requests (retry after 500 s)"));
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(quote).toHaveBeenCalledTimes(1);
+    expect(result.updated).toBe(0);
+  }, 20_000);
+
+  it("still retries a genuine 5xx", async () => {
+    stubAllSymbolsFetchable();
+    const quote = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Yahoo returned HTTP 503"))
+      .mockResolvedValueOnce([quoteFor("AAPL")]);
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    // The 429 short-circuit must not have disarmed the ladder for real outages
+    expect(quote).toHaveBeenCalledTimes(2);
+    expect(result.updated).toBe(1);
+  }, 20_000);
 });

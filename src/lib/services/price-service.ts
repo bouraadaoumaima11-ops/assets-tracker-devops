@@ -1,13 +1,36 @@
 import "server-only";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { prisma } from "@/lib/prisma";
-import { getYahooClient } from "@/lib/services/yahoo-client";
+import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client";
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
 import { log, withTiming } from "@/lib/logger";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [500, 1_500]; // 2 retries: 500 ms then 1.5 s
 const CLAIM_LOCK_TTL_MS = 30_000; // dead-instance TTL for refreshingAt claim
+
+// Batching limits. On the cron path the symbol list is the union of every
+// user's holdings and watchlist entries, so an unchunked request grows with the
+// instance rather than with any one user. Yahoo's `quote` is comfortable with
+// ~50 symbols per call; 3 chunks in flight keeps a 250-symbol universe to two
+// waves without presenting as a burst. The fallback cap is deliberately lower
+// than the number of symbols it replaces: answering one upstream failure with
+// one request per symbol is what turns a rate-limit into an outage.
+const YAHOO_CHUNK_SIZE = 50;
+const YAHOO_CHUNK_CONCURRENCY = 3;
+const YAHOO_FALLBACK_CONCURRENCY = 4;
+
+// CoinGecko's free tier rate-limits far more aggressively than Yahoo, so ids
+// are chunked mainly to bound the query string and are run only 2 at a time.
+const COINGECKO_CHUNK_SIZE = 50;
+const COINGECKO_CONCURRENCY = 2;
+
+// Wall-clock budgets. The cron route has a 60 s maxDuration and price refresh is
+// only its first step, so neither provider may consume the whole window. The
+// guard stops *queueing* work; one already-dispatched request can still run to
+// its FETCH_TIMEOUT_MS, which bounds the real ceiling at budget + 5 s.
+const YAHOO_BUDGET_MS = 15_000;
+const COINGECKO_BUDGET_MS = 8_000;
 
 export type RefreshPricesResult = {
   updated: number;
@@ -39,8 +62,73 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ponytail: `chunk` and `runPool` are deliberately local. PR #647 introduces
+// `src/lib/batch.ts` with equivalent `chunk`/`mapSettled` helpers; collapse
+// these into that module once it lands rather than keeping two copies.
+function chunk<T>(items: T[], size: number): T[][] {
+  const groups: T[][] = [];
+  for (let i = 0; i < items.length; i += size) groups.push(items.slice(i, i + size));
+  return groups;
+}
+
+/**
+ * Run `worker` over `items` with at most `limit` of them in flight. Per-item
+ * rejections are swallowed (the worker owns its own logging) so the pool always
+ * drains to the end instead of losing the remaining items to one failure.
+ *
+ * `shouldStop` is polled before each item is dispatched, so a blown wall-clock
+ * budget stops queueing new upstream calls instead of letting a slow tail run on
+ * past the caller's deadline.
+ */
+async function runPool<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+  shouldStop: () => boolean = () => false,
+): Promise<void> {
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      if (shouldStop()) return;
+      const item = items[next++];
+      try {
+        await worker(item);
+      } catch {
+        // Worker-level concern; never let one item abort the pool.
+      }
+    }
+  });
+  await Promise.all(runners);
+}
+
+/** Returns a predicate that flips true once `budgetMs` of wall clock has elapsed. */
+function deadlineGuard(budgetMs: number): () => boolean {
+  const deadline = Date.now() + budgetMs;
+  return () => Date.now() >= deadline;
+}
+
+/**
+ * A rate-limit is the one failure class where retrying is strictly harmful: the
+ * ladder re-hits an endpoint that has explicitly told us to back off, and the
+ * upstream cool-off outlives our 500 ms / 1.5 s delays by orders of magnitude.
+ * Detected both from yahoo-finance2's numeric `code` and from message text, so
+ * CoinGecko's `HTTP 429` is covered by the same rule.
+ */
+function isRateLimited(err: unknown): boolean {
+  if (getYahooErrorStatus(err) === 429) return true;
+  if (!(err instanceof Error)) return false;
+  const msg = err.message.toLowerCase();
+  return (
+    /\b429\b/.test(err.message) || msg.includes("too many requests") || msg.includes("rate limit")
+  );
+}
+
 function isRetryable(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
+  // Checked before everything below: the 5xx regex would otherwise match a
+  // rate-limit message that merely carries a 5xx-looking token (a `Retry-After`
+  // hint, an edge-node id), turning one 429 into three.
+  if (isRateLimited(err)) return false;
   if (err.name === "AbortError" || err.name === "TimeoutError") return true;
   const msg = err.message.toLowerCase();
   return (
@@ -53,14 +141,20 @@ function isRetryable(err: unknown): boolean {
   );
 }
 
-async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  shouldStop: () => boolean = () => false,
+): Promise<T> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
     try {
       return await fn();
     } catch (err) {
       lastError = err;
-      if (attempt < RETRY_DELAYS_MS.length && isRetryable(err)) {
+      // `shouldStop` keeps the ladder inside the caller's budget: without it a
+      // request dispatched just before the deadline could still add ~17 s of
+      // timeouts and backoff on top of it.
+      if (attempt < RETRY_DELAYS_MS.length && isRetryable(err) && !shouldStop()) {
         await sleep(RETRY_DELAYS_MS[attempt]);
       } else {
         break;
@@ -132,15 +226,22 @@ async function fetchYahooQuotes(
   if (symbols.length === 0) return results;
 
   const yahooFinance = await getYahooClient();
+  const outOfBudget = deadlineGuard(YAHOO_BUDGET_MS);
 
+  // The timeout is per request, so after chunking it applies per chunk.
   const fetchSymbols = async (syms: string[]) => {
-    const quotes = await withRetry(() =>
-      Promise.race([
-        yahooFinance.quote(syms),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("Yahoo Finance request timed out")), FETCH_TIMEOUT_MS),
-        ),
-      ]),
+    const quotes = await withRetry(
+      () =>
+        Promise.race([
+          yahooFinance.quote(syms),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Yahoo Finance request timed out")),
+              FETCH_TIMEOUT_MS,
+            ),
+          ),
+        ]),
+      outOfBudget,
     );
     for (const q of Array.isArray(quotes) ? quotes : [quotes]) {
       if (q?.regularMarketPrice && q.symbol) {
@@ -152,23 +253,47 @@ async function fetchYahooQuotes(
     }
   };
 
-  try {
-    await withTiming("price.yahoo.fetch", () => fetchSymbols(symbols), {
-      symbolCount: symbols.length,
-    });
-  } catch (batchErr) {
-    // Batch failed after retries — fall back to per-symbol to isolate bad tickers
-    log.error("price.yahoo.batch_failed", { error: String(batchErr) });
-    await Promise.allSettled(
-      symbols.map(async (symbol) => {
-        try {
-          await fetchSymbols([symbol]);
-        } catch (err) {
-          log.error("price.yahoo.symbol_failed", { symbol, error: String(err) });
-        }
-      }),
-    );
-  }
+  const groups = chunk(symbols, YAHOO_CHUNK_SIZE);
+
+  await withTiming(
+    "price.yahoo.fetch",
+    () =>
+      runPool(
+        groups,
+        YAHOO_CHUNK_CONCURRENCY,
+        async (group) => {
+          try {
+            await fetchSymbols(group);
+          } catch (batchErr) {
+            log.error("price.yahoo.batch_failed", {
+              error: String(batchErr),
+              symbolCount: group.length,
+            });
+            // Isolate bad tickers for *this chunk only*. Falling back over the
+            // whole symbol list is what made one failed request fan out to one
+            // request per symbol across every user's holdings.
+            //
+            // A single-symbol chunk is skipped outright: the per-symbol retry
+            // would repeat the exact call that just failed.
+            if (group.length === 1) return;
+            await runPool(
+              group,
+              YAHOO_FALLBACK_CONCURRENCY,
+              async (symbol) => {
+                try {
+                  await fetchSymbols([symbol]);
+                } catch (err) {
+                  log.error("price.yahoo.symbol_failed", { symbol, error: String(err) });
+                }
+              },
+              outOfBudget,
+            );
+          }
+        },
+        outOfBudget,
+      ),
+    { symbolCount: symbols.length, chunkCount: groups.length },
+  );
 
   return results;
 }
@@ -213,38 +338,53 @@ export async function fetchCryptoPrices(
       return { original: s, base, geckoId, quoteCurrency };
     });
 
-    const ids = symbolMap.map((s) => s.geckoId).filter(Boolean);
+    // Deduplicated: several pairs can share one id (BTC-USD and BTC-EUR are both
+    // "bitcoin"), and repeating it only inflates the query string.
+    const ids = [...new Set(symbolMap.map((s) => s.geckoId).filter(Boolean))];
     const vsCurrencies = [...new Set(symbolMap.map((s) => s.quoteCurrency.toLowerCase()))];
     if (ids.length > 0) {
-      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids.join(",")}&vs_currencies=${vsCurrencies.join(",")}`;
-      try {
-        const data = await withTiming(
-          "price.coingecko.fetch",
-          () =>
-            withRetry(async () => {
-              const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-              try {
-                const res = await fetch(url, {
-                  signal: controller.signal,
-                  next: { revalidate: 60, tags: ["prices:crypto"] },
-                } as RequestInit);
-                if (!res.ok) throw new Error(`CoinGecko returned HTTP ${res.status}`);
-                return res.json() as Promise<Record<string, Record<string, number>>>;
-              } finally {
-                clearTimeout(timeoutId);
-              }
-            }),
-          { idCount: ids.length },
-        );
-        for (const { original, geckoId, quoteCurrency } of symbolMap) {
-          const price = data[geckoId]?.[quoteCurrency.toLowerCase()];
-          if (price) {
-            results.set(original, { price, currency: quoteCurrency });
+      const data: Record<string, Record<string, number>> = {};
+      const outOfBudget = deadlineGuard(COINGECKO_BUDGET_MS);
+      // Chunked so the query string stays bounded regardless of how many
+      // distinct coins the instance holds. A chunk that fails no longer costs
+      // the run every other chunk's prices.
+      await runPool(
+        chunk(ids, COINGECKO_CHUNK_SIZE),
+        COINGECKO_CONCURRENCY,
+        async (idGroup) => {
+          const url = `https://api.coingecko.com/api/v3/simple/price?ids=${idGroup.join(",")}&vs_currencies=${vsCurrencies.join(",")}`;
+          try {
+            const part = await withTiming(
+              "price.coingecko.fetch",
+              () =>
+                withRetry(async () => {
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+                  try {
+                    const res = await fetch(url, {
+                      signal: controller.signal,
+                      next: { revalidate: 60, tags: ["prices:crypto"] },
+                    } as RequestInit);
+                    if (!res.ok) throw new Error(`CoinGecko returned HTTP ${res.status}`);
+                    return res.json() as Promise<Record<string, Record<string, number>>>;
+                  } finally {
+                    clearTimeout(timeoutId);
+                  }
+                }, outOfBudget),
+              { idCount: idGroup.length },
+            );
+            Object.assign(data, part);
+          } catch (error) {
+            log.error("price.coingecko.failed", { error: String(error) });
           }
+        },
+        outOfBudget,
+      );
+      for (const { original, geckoId, quoteCurrency } of symbolMap) {
+        const price = data[geckoId]?.[quoteCurrency.toLowerCase()];
+        if (price) {
+          results.set(original, { price, currency: quoteCurrency });
         }
-      } catch (error) {
-        log.error("price.coingecko.failed", { error: String(error) });
       }
     }
   }
