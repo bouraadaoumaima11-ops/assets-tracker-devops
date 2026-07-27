@@ -123,7 +123,7 @@ vi.mock("@/lib/services/exchange-rate-service", async (importActual) => {
   return { ...actual, getAllExchangeRates: vi.fn(async () => h.rates) };
 });
 
-const { getCachedNetWorthSummary, computeNetWorthSummary } =
+const { getCachedNetWorthSummary, computeNetWorthSummary, loadNetWorthInputsForUsers } =
   await import("@/lib/services/net-worth-service");
 
 describe("getCachedNetWorthSummary (two-pass valuation)", () => {
@@ -337,5 +337,106 @@ describe("computeNetWorthSummary({ fresh: true })", () => {
     expect(summary.totalAssets).toBeCloseTo(3000); // stale 1:1 map
     expect(vi.mocked(getAllExchangeRates)).toHaveBeenCalled();
     expect(h.tags).toContain("accounts");
+  });
+});
+
+// Regression #641: the cron used to call computeNetWorthSummary once per user,
+// so its DB round-trips grew linearly with the instance and ran unbounded in
+// flight. Inputs are now bulk-loaded and injected. The refactor is only allowed
+// to change WHERE the data comes from — never the arithmetic.
+describe("loadNetWorthInputsForUsers (bulk path)", () => {
+  const fixture = () => {
+    h.rates = new Map();
+    h.freshRates = new Map([["USD_TWD", 30]]);
+    h.prices = [
+      { symbol: "AAPL", price: 200, currency: "USD" },
+      { symbol: "2330.TW", price: 900, currency: "TWD" },
+    ];
+    h.accounts = [
+      account({
+        id: "brokerage",
+        type: "ASSET",
+        currency: "USD",
+        cashBalance: 500,
+        holdings: [
+          holding({ id: "h1", accountId: "brokerage", symbol: "AAPL", quantity: 3 }),
+          holding({
+            id: "h2",
+            accountId: "brokerage",
+            symbol: "2330.TW",
+            quantity: 10,
+            currency: "TWD",
+          }),
+        ],
+      }),
+      account({ id: "loan", type: "LIABILITY", currency: "TWD", cashBalance: 6000 }),
+    ];
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.warnings = [];
+    h.tags = [];
+  });
+
+  it("produces byte-identical summaries to the per-user fresh path", async () => {
+    fixture();
+    const perUser = await computeNetWorthSummary("u1", "USD", { fresh: true });
+
+    fixture();
+    const { getFreshExchangeRates } = await import("@/lib/services/exchange-rate-service");
+    const inputs = await loadNetWorthInputsForUsers(["u1"], await getFreshExchangeRates());
+    const bulk = await computeNetWorthSummary("u1", "USD", {
+      fresh: true,
+      preloaded: inputs.get("u1"),
+    });
+
+    expect(bulk).toEqual(perUser);
+    // Sanity: the fixture actually exercises FX + prices, so "identical" means
+    // something. 500 cash + 3*200 AAPL + 10*900 TWD/30 = 1400.
+    expect(bulk.totalAssets).toBeCloseTo(1400);
+    expect(bulk.totalLiabilities).toBeCloseTo(200);
+  });
+
+  it("costs a fixed number of queries regardless of user count", async () => {
+    fixture();
+    const { prisma } = await import("@/lib/prisma");
+    const { getFreshExchangeRates } = await import("@/lib/services/exchange-rate-service");
+    const userIds = Array.from({ length: 50 }, (_, i) => `u${i}`);
+
+    const ratesMap = await getFreshExchangeRates();
+    vi.clearAllMocks();
+    await loadNetWorthInputsForUsers(userIds, ratesMap);
+
+    // One accounts query + one price query for all 50 users. The per-user path
+    // would have issued 50 of each, plus 50 ExchangeRate scans.
+    expect(vi.mocked(prisma.account.findMany)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.priceCache.findMany)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.exchangeRate.findMany)).not.toHaveBeenCalled();
+  });
+
+  it("gives users with no active accounts an entry, so they still get snapshotted", async () => {
+    h.accounts = [];
+    h.prices = [];
+    h.freshRates = new Map();
+
+    const inputs = await loadNetWorthInputsForUsers(["ghost"], new Map());
+
+    expect(inputs.get("ghost")).toEqual({ accounts: [], ratesMap: new Map(), priceMap: {} });
+    const summary = await computeNetWorthSummary("ghost", "USD", {
+      fresh: true,
+      preloaded: inputs.get("ghost"),
+    });
+    expect(summary.netWorth).toBe(0);
+  });
+
+  it("skips the price query entirely when no user holds anything", async () => {
+    h.accounts = [account({ id: "cash", type: "ASSET", currency: "USD", cashBalance: 10 })];
+    const { prisma } = await import("@/lib/prisma");
+    vi.clearAllMocks();
+
+    await loadNetWorthInputsForUsers(["u1"], new Map());
+
+    expect(vi.mocked(prisma.priceCache.findMany)).not.toHaveBeenCalled();
   });
 });
