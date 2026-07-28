@@ -218,99 +218,6 @@ describe("snapshot cron route", () => {
     expect(vi.mocked(prisma.holdingTransaction.createMany)).not.toHaveBeenCalled();
   });
 
-  it("uses the captured Taiwan business day for option expiry, recurring work, and snapshots", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-05T21:30:00.000Z")); // Jul 6 05:30 Taipei
-    h.expiredOptions = [
-      { id: "expired-before-day", quantity: 2, expiration: new Date("2026-07-05T00:00:00Z") },
-      { id: "active-on-day", quantity: 3, expiration: new Date("2026-07-06T00:00:00Z") },
-      { id: "active-after-day", quantity: 4, expiration: new Date("2026-07-07T00:00:00Z") },
-    ];
-    try {
-      const { GET } = await import("@/app/api/cron/snapshot/route");
-      const { prisma } = await import("@/lib/prisma");
-      const { materializeDueRecurringTransactions } =
-        await import("@/lib/services/recurring-cash-service");
-      const { materializeDueInvestments } =
-        await import("@/lib/services/recurring-investment-service");
-
-      const response = await GET(
-        new Request("http://unit.test/api/cron/snapshot", {
-          headers: { authorization: "Bearer test-secret" },
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      const businessDay = new Date("2026-07-06T00:00:00.000Z");
-      expect(vi.mocked(prisma.holding.findMany)).toHaveBeenCalledWith({
-        where: {
-          assetType: "OPTION",
-          expiration: { lt: businessDay },
-          quantity: { gt: 0 },
-        },
-      });
-      expect(vi.mocked(prisma.holding.updateMany)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(prisma.holding.updateMany)).toHaveBeenCalledWith({
-        where: { id: "expired-before-day", quantity: 2 },
-        data: { quantity: 0 },
-      });
-      expect(vi.mocked(prisma.holdingTransaction.create)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(prisma.holdingTransaction.create)).toHaveBeenCalledWith({
-        data: {
-          holdingId: "expired-before-day",
-          type: "SELL",
-          quantity: 2,
-          note: "Expired",
-        },
-      });
-      expect(vi.mocked(materializeDueRecurringTransactions)).toHaveBeenCalledWith(businessDay);
-      expect(vi.mocked(materializeDueInvestments)).toHaveBeenCalledWith(businessDay);
-      expect(h.snapshotOpts).toEqual([expect.objectContaining({ fresh: true, businessDay })]);
-      expect(h.events.indexOf("option:expired-before-day:zeroed")).toBeLessThan(
-        h.events.indexOf("option:expired-before-day:sell-recorded"),
-      );
-      expect(h.events.indexOf("option:expired-before-day:sell-recorded")).toBeLessThan(
-        h.events.indexOf("snapshot-inputs:loaded"),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("preserves the UTC cutoff when UTC and Taiwan share the calendar day", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-05T12:00:00.000Z")); // Jul 5 in UTC and Taipei
-    try {
-      const { GET } = await import("@/app/api/cron/snapshot/route");
-      const { prisma } = await import("@/lib/prisma");
-      const { materializeDueRecurringTransactions } =
-        await import("@/lib/services/recurring-cash-service");
-      const { materializeDueInvestments } =
-        await import("@/lib/services/recurring-investment-service");
-
-      const response = await GET(
-        new Request("http://unit.test/api/cron/snapshot", {
-          headers: { authorization: "Bearer test-secret" },
-        }),
-      );
-
-      expect(response.status).toBe(200);
-      const businessDay = new Date("2026-07-05T00:00:00.000Z");
-      expect(vi.mocked(prisma.holding.findMany)).toHaveBeenCalledWith({
-        where: {
-          assetType: "OPTION",
-          expiration: { lt: businessDay },
-          quantity: { gt: 0 },
-        },
-      });
-      expect(vi.mocked(materializeDueRecurringTransactions)).toHaveBeenCalledWith(businessDay);
-      expect(vi.mocked(materializeDueInvestments)).toHaveBeenCalledWith(businessDay);
-      expect(h.snapshotOpts).toEqual([expect.objectContaining({ fresh: true, businessDay })]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it("returns 200 and records failed user ids when only some snapshots fail", async () => {
     h.users = [
       { id: "user1", appSettings: { baseCurrency: "USD" } },
@@ -610,6 +517,99 @@ describe("snapshot cron route", () => {
       const expected = new Date("2026-07-06T00:00:00.000Z");
       expect(vi.mocked(materializeDueRecurringTransactions)).toHaveBeenCalledWith(expected);
       expect(vi.mocked(materializeDueInvestments)).toHaveBeenCalledWith(expected);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the captured Taiwan business day for option expiry, recurring work, and snapshots", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T21:30:00.000Z")); // Jul 6 05:30 Taipei
+    h.expiredOptions = [
+      { id: "expired-before-day", quantity: 2, expiration: new Date("2026-07-05T00:00:00Z") },
+      { id: "active-on-day", quantity: 3, expiration: new Date("2026-07-06T00:00:00Z") },
+      { id: "active-after-day", quantity: 4, expiration: new Date("2026-07-07T00:00:00Z") },
+    ];
+    try {
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+      const { prisma } = await import("@/lib/prisma");
+      const { materializeDueRecurringTransactions } =
+        await import("@/lib/services/recurring-cash-service");
+      const { materializeDueInvestments } =
+        await import("@/lib/services/recurring-investment-service");
+
+      const response = await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const businessDay = new Date("2026-07-06T00:00:00.000Z");
+      expect(vi.mocked(prisma.holding.findMany)).toHaveBeenCalledWith({
+        where: {
+          assetType: "OPTION",
+          expiration: { lt: businessDay },
+          quantity: { gt: 0 },
+        },
+      });
+      expect(vi.mocked(prisma.holding.updateMany)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(prisma.holding.updateMany)).toHaveBeenCalledWith({
+        where: { id: "expired-before-day", quantity: 2 },
+        data: { quantity: 0 },
+      });
+      expect(vi.mocked(prisma.holdingTransaction.create)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(prisma.holdingTransaction.create)).toHaveBeenCalledWith({
+        data: {
+          holdingId: "expired-before-day",
+          type: "SELL",
+          quantity: 2,
+          note: "Expired",
+        },
+      });
+      expect(vi.mocked(materializeDueRecurringTransactions)).toHaveBeenCalledWith(businessDay);
+      expect(vi.mocked(materializeDueInvestments)).toHaveBeenCalledWith(businessDay);
+      expect(h.snapshotOpts).toEqual([expect.objectContaining({ fresh: true, businessDay })]);
+      expect(h.events.indexOf("option:expired-before-day:zeroed")).toBeLessThan(
+        h.events.indexOf("option:expired-before-day:sell-recorded"),
+      );
+      expect(h.events.indexOf("option:expired-before-day:sell-recorded")).toBeLessThan(
+        h.events.indexOf("snapshot-inputs:loaded"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("preserves the UTC cutoff when UTC and Taiwan share the calendar day", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-05T12:00:00.000Z")); // Jul 5 in UTC and Taipei
+    try {
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+      const { prisma } = await import("@/lib/prisma");
+      const { materializeDueRecurringTransactions } =
+        await import("@/lib/services/recurring-cash-service");
+      const { materializeDueInvestments } =
+        await import("@/lib/services/recurring-investment-service");
+
+      const response = await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const businessDay = new Date("2026-07-05T00:00:00.000Z");
+      expect(vi.mocked(prisma.holding.findMany)).toHaveBeenCalledWith({
+        where: {
+          assetType: "OPTION",
+          expiration: { lt: businessDay },
+          quantity: { gt: 0 },
+        },
+      });
+      expect(vi.mocked(materializeDueRecurringTransactions)).toHaveBeenCalledWith(businessDay);
+      expect(vi.mocked(materializeDueInvestments)).toHaveBeenCalledWith(businessDay);
+      expect(h.snapshotOpts).toEqual([expect.objectContaining({ fresh: true, businessDay })]);
     } finally {
       vi.useRealTimers();
     }
