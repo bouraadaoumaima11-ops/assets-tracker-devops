@@ -23,7 +23,7 @@ export const PATCH = withAuth(
 
     const existing = await prisma.recurringInvestment.findFirst({
       where: { id: recurringId, accountId: id, account: { userId } },
-      select: { id: true, startDate: true, endDate: true, frequency: true },
+      select: { id: true, startDate: true, endDate: true, frequency: true, updatedAt: true },
     });
     if (!existing) return failure("Recurring investment not found", 404);
 
@@ -60,8 +60,7 @@ export const PATCH = withAuth(
     const [rule] = await prisma.recurringInvestment.updateManyAndReturn({
       where: {
         id: recurringId,
-        startDate: existing.startDate,
-        endDate: existing.endDate,
+        updatedAt: existing.updatedAt,
       },
       data,
     });

@@ -161,8 +161,13 @@ export async function materializeDueRecurringTransactions(
     // Expired rule that was still flagged active (e.g. endDate < nextRunDate):
     // nothing to post, just advance + deactivate.
     if (occurrences.length === 0) {
-      await prisma.recurringCashTransaction.update({
-        where: { id: rule.id },
+      await prisma.recurringCashTransaction.updateMany({
+        where: {
+          id: rule.id,
+          isActive: true,
+          nextRunDate: rule.nextRunDate,
+          updatedAt: rule.updatedAt,
+        },
         data: { nextRunDate, isActive: stillActive },
       });
       continue;
@@ -173,6 +178,20 @@ export async function materializeDueRecurringTransactions(
 
     try {
       const inserted = await prisma.$transaction(async (tx) => {
+        // Reserve this exact rule version before creating any side effects.
+        // PATCH and competing cron runs both advance updatedAt, so a stale
+        // sweep loses this CAS and exits without posting or overwriting state.
+        const reservation = await tx.recurringCashTransaction.updateMany({
+          where: {
+            id: rule.id,
+            isActive: true,
+            nextRunDate: rule.nextRunDate,
+            updatedAt: rule.updatedAt,
+          },
+          data: { nextRunDate, isActive: stillActive },
+        });
+        if (reservation.count === 0) return 0;
+
         const res = await tx.cashTransaction.createMany({
           data: occurrences.map((d) => ({
             accountId: rule.accountId,
@@ -192,10 +211,6 @@ export async function materializeDueRecurringTransactions(
             data: { cashBalance: { increment: signedUnit.times(res.count) } },
           });
         }
-        await tx.recurringCashTransaction.update({
-          where: { id: rule.id },
-          data: { nextRunDate, isActive: stillActive },
-        });
         return res.count;
       });
       created += inserted;

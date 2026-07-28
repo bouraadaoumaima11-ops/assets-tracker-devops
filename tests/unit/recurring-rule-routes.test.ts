@@ -217,7 +217,7 @@ describe("recurring rule PATCH routes", () => {
     }
   });
 
-  it("rejects a cash-rule edit when its date range changed concurrently", async () => {
+  it("rejects a cash-rule edit when its amount changed concurrently", async () => {
     h.cashUpdateManyAndReturnCount = 0;
     const { PATCH } =
       await import("@/app/api/accounts/[id]/recurring-cash-transactions/[recurringId]/route");
@@ -225,6 +225,8 @@ describe("recurring rule PATCH routes", () => {
     const response = await PATCH(jsonRequest({ note: "updated" }), params("cash-rule-1"));
 
     expect(response.status).toBe(409);
+    const call = h.cashUpdateManyAndReturnCalls[0] as { where: Record<string, unknown> };
+    expect(call.where.updatedAt).toEqual(date("2026-07-01"));
   });
 
   it("rejects an investment-rule end date before its persisted start date", async () => {
@@ -253,7 +255,7 @@ describe("recurring rule PATCH routes", () => {
     expect(h.investmentUpdateManyAndReturnCalls).toHaveLength(0);
   });
 
-  it("rejects an investment-rule edit when its date range changed concurrently", async () => {
+  it("rejects an investment-rule edit when it was disabled concurrently", async () => {
     h.investmentUpdateManyAndReturnCount = 0;
     const { PATCH } =
       await import("@/app/api/accounts/[id]/recurring-investments/[recurringId]/route");
@@ -261,6 +263,8 @@ describe("recurring rule PATCH routes", () => {
     const response = await PATCH(jsonRequest({ note: "updated" }), params("investment-rule-1"));
 
     expect(response.status).toBe(409);
+    const call = h.investmentUpdateManyAndReturnCalls[0] as { where: Record<string, unknown> };
+    expect(call.where.updatedAt).toEqual(date("2026-07-01"));
   });
 
   it("returns the cash rule from its guarded write without a follow-up read", async () => {
