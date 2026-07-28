@@ -99,8 +99,13 @@ export async function materializeDueInvestments(
     const stillActive = !endUtc || nextRunDate.getTime() <= endUtc.getTime();
 
     if (occurrences.length === 0) {
-      await prisma.recurringInvestment.update({
-        where: { id: rule.id },
+      await prisma.recurringInvestment.updateMany({
+        where: {
+          id: rule.id,
+          isActive: true,
+          nextRunDate: rule.nextRunDate,
+          updatedAt: rule.updatedAt,
+        },
         data: { nextRunDate, isActive: stillActive },
       });
       continue;
@@ -151,6 +156,20 @@ export async function materializeDueInvestments(
 
     try {
       const inserted = await prisma.$transaction(async (tx) => {
+        // Reserve this exact rule version before creating a holding or any
+        // financial rows. If PATCH changed any mutable field while price/FX
+        // resolution was in flight, updatedAt makes this CAS lose cleanly.
+        const reservation = await tx.recurringInvestment.updateMany({
+          where: {
+            id: rule.id,
+            isActive: true,
+            nextRunDate: rule.nextRunDate,
+            updatedAt: rule.updatedAt,
+          },
+          data: { nextRunDate, isActive: stillActive },
+        });
+        if (reservation.count === 0) return 0;
+
         // Ensure the target holding exists (auto-create on first run).
         const holding = await tx.holding.upsert({
           where: { accountId_symbol: { accountId: rule.accountId, symbol: rule.symbol } },
@@ -196,10 +215,6 @@ export async function materializeDueInvestments(
           });
         }
 
-        await tx.recurringInvestment.update({
-          where: { id: rule.id },
-          data: { nextRunDate, isActive: stillActive },
-        });
         return res.count;
       });
       created += inserted;

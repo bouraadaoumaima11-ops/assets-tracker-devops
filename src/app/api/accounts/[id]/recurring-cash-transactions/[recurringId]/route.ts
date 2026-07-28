@@ -26,7 +26,7 @@ export const PATCH = withAuth(
     // Scope ownership into the lookup so a foreign rule can't be edited.
     const existing = await prisma.recurringCashTransaction.findFirst({
       where: { id: recurringId, accountId: id, account: { userId } },
-      select: { id: true, startDate: true, endDate: true, frequency: true },
+      select: { id: true, startDate: true, endDate: true, frequency: true, updatedAt: true },
     });
     if (!existing) return failure("Recurring transaction not found", 404);
 
@@ -64,8 +64,7 @@ export const PATCH = withAuth(
     const [rule] = await prisma.recurringCashTransaction.updateManyAndReturn({
       where: {
         id: recurringId,
-        startDate: existing.startDate,
-        endDate: existing.endDate,
+        updatedAt: existing.updatedAt,
       },
       data,
     });
