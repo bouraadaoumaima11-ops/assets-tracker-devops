@@ -35,6 +35,8 @@ const YAHOO_BUDGET_MS = 15_000;
 const COINGECKO_BUDGET_MS = 8_000;
 
 export type RefreshPricesResult = {
+  /** Whether no price work was due, some or all due quotes persisted, or the refresh failed. */
+  outcome: "no_due_symbols" | "deferred" | "success" | "partial_success" | "total_failure";
   updated: number;
   /** Persisted rows whose price/currency changed compared with the previous value. */
   changed: number;
@@ -215,6 +217,7 @@ export function normalizeMinorCurrencyQuote(
 
 async function fetchYahooQuotes(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
   const results = new Map<string, { price: number; currency: string }>();
   if (symbols.length === 0) return results;
@@ -259,6 +262,7 @@ async function fetchYahooQuotes(
           try {
             await fetchSymbols(group);
           } catch (batchErr) {
+            providerErrors?.push(`Yahoo Finance batch failed: ${String(batchErr)}`);
             log.error("price.yahoo.batch_failed", {
               error: String(batchErr),
               symbolCount: group.length,
@@ -280,6 +284,7 @@ async function fetchYahooQuotes(
                 try {
                   await fetchSymbols([symbol]);
                 } catch (err) {
+                  providerErrors?.push(`Yahoo Finance fallback failed: ${String(err)}`);
                   log.error("price.yahoo.symbol_failed", { symbol, error: String(err) });
                 }
               },
@@ -297,8 +302,9 @@ async function fetchYahooQuotes(
 
 export async function fetchStockPrices(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
-  return fetchYahooQuotes(symbols);
+  return fetchYahooQuotes(symbols, providerErrors);
 }
 
 // Strip currency suffix from crypto symbol (e.g. "BTC-USD" -> "BTC")
@@ -315,11 +321,12 @@ function extractQuoteCurrency(symbol: string): string {
 
 export async function fetchCryptoPrices(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
   if (symbols.length === 0) return new Map();
 
   // Primary: Yahoo Finance (handles crypto pairs like BTC-USD)
-  const results = await fetchYahooQuotes(symbols);
+  const results = await fetchYahooQuotes(symbols, providerErrors);
 
   // Fallback: CoinGecko for any symbols not found via Yahoo Finance
   const missing = symbols.filter((s) => !results.has(s));
@@ -382,6 +389,7 @@ export async function fetchCryptoPrices(
               data[id] = { ...data[id], ...prices };
             }
           } catch (error) {
+            providerErrors?.push(`CoinGecko fetch failed: ${String(error)}`);
             log.error("price.coingecko.failed", { error: String(error) });
           }
         },
@@ -463,6 +471,7 @@ export async function refreshPricesForStockSymbols(
   const uniqueSymbols = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
   if (uniqueSymbols.length === 0) {
     return {
+      outcome: "no_due_symbols",
       updated: 0,
       changed: 0,
       skippedFresh: 0,
@@ -496,6 +505,7 @@ async function refreshPricesForHoldings(
 ): Promise<RefreshPricesResult> {
   if (holdings.length === 0) {
     return {
+      outcome: "no_due_symbols",
       updated: 0,
       changed: 0,
       skippedFresh: 0,
@@ -543,6 +553,7 @@ async function refreshPricesForHoldings(
         ? new Date(earliestFreshUpdatedAt.getTime() + PRICE_REFRESH_TTL_MS)
         : null;
       return {
+        outcome: "no_due_symbols",
         updated: 0,
         changed: 0,
         skippedFresh,
@@ -585,6 +596,7 @@ async function refreshPricesForHoldings(
       // All existing stale symbols are being refreshed by another instance.
       // Tell the client when the claim lock expires so it knows when to retry.
       return {
+        outcome: "deferred",
         updated: 0,
         changed: 0,
         skippedFresh,
@@ -605,13 +617,29 @@ async function refreshPricesForHoldings(
 
   const cryptoSymbols = holdings.filter((h) => h.assetType === "CRYPTO").map((h) => h.symbol);
 
+  // OTHER holdings intentionally have no market-data provider. They are not a
+  // failed refresh target; release any stale-row claim and preserve the normal
+  // no-work success semantics.
+  if (stockSymbols.length === 0 && cryptoSymbols.length === 0) {
+    await releaseClaims(claimedSymbols);
+    return {
+      outcome: "no_due_symbols",
+      updated: 0,
+      changed: 0,
+      skippedFresh,
+      errors: [],
+      nextRefreshAt: null,
+      retryAfterSeconds: null,
+    };
+  }
+
   const errors: string[] = [];
   let updated = 0;
   let changed = 0;
 
   const [stockResult, cryptoResult] = await Promise.allSettled([
-    fetchStockPrices(stockSymbols),
-    fetchCryptoPrices(cryptoSymbols),
+    fetchStockPrices(stockSymbols, errors),
+    fetchCryptoPrices(cryptoSymbols, errors),
   ]);
   const stockPrices =
     stockResult.status === "fulfilled"
@@ -635,7 +663,11 @@ async function refreshPricesForHoldings(
     // No prices came back (all fetches failed). Release claims so the next
     // request can retry rather than waiting for the 30s dead-instance TTL.
     await releaseClaims(claimedSymbols);
+    if (errors.length === 0) {
+      errors.push(`No usable prices returned for ${holdings.length} due symbols`);
+    }
     return {
+      outcome: "total_failure",
       updated: 0,
       changed: 0,
       skippedFresh,
@@ -691,5 +723,17 @@ async function refreshPricesForHoldings(
     await releaseClaims(claimedSymbols);
   }
 
-  return { updated, changed, skippedFresh, errors, nextRefreshAt: null, retryAfterSeconds: null };
+  return {
+    outcome: errors.some((error) => error.startsWith("Bulk upsert failed"))
+      ? "total_failure"
+      : entries.length < holdings.length
+        ? "partial_success"
+        : "success",
+    updated,
+    changed,
+    skippedFresh,
+    errors,
+    nextRefreshAt: null,
+    retryAfterSeconds: null,
+  };
 }

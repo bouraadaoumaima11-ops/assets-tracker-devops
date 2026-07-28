@@ -130,6 +130,19 @@ describe("refreshAllPrices — cron-wide symbol collection", () => {
     expect(fetched).toContain("TSLA");
     expect(fetched.filter((symbol) => symbol === "AAPL")).toHaveLength(1);
   });
+
+  it("treats unpriceable holdings as no due symbols", async () => {
+    vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([
+      { symbol: "PRIVATE-LOAN", assetType: "OTHER" },
+    ] as never);
+    vi.mocked(prisma.stockWatchItem.findMany).mockResolvedValueOnce([] as never);
+
+    const result = await refreshAllPrices();
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
+    expect(getYahooClient).not.toHaveBeenCalled();
+  });
 });
 
 describe("refreshPricesForStockSymbols — claim deduplication", () => {
@@ -153,6 +166,26 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(result.updated).toBe(0);
     expect(result.errors).toHaveLength(0);
     expect(getYahooClient).not.toHaveBeenCalled();
+  });
+
+  it("reports no_due_symbols when every requested symbol is still fresh", async () => {
+    vi.mocked(prisma.priceCache.findMany).mockResolvedValueOnce([
+      { symbol: "AAPL", updatedAt: new Date() },
+    ] as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(getYahooClient).not.toHaveBeenCalled();
+  });
+
+  it("reports no_due_symbols when there are no requested symbols", async () => {
+    const result = await refreshPricesForStockSymbols([]);
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
   });
 
   it("releases the claim when Yahoo returns no prices (fetch failure)", async () => {
@@ -182,6 +215,10 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(getYahooClient).toHaveBeenCalled();
     expect(cleanupCall).toBeDefined();
     expect(result.updated).toBe(0);
+    expect(result.outcome).toBe("total_failure");
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("Yahoo Finance batch failed")]),
+    );
   });
 
   it("releases the claim when the Yahoo client fails to initialize", async () => {
@@ -234,6 +271,7 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     const result = await refreshPricesForStockSymbols(["AAPL", "MSFT"]);
 
     expect(result.updated).toBe(1);
+    expect(result.outcome).toBe("partial_success");
 
     // The release call must target MSFT only, never AAPL (whose claim the
     // upsert already cleared).
