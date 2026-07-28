@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   accountUpdates: [] as Array<{ where: unknown; data: { cashBalance: { decrement: unknown } } }>,
   ruleUpdates: [] as Array<{ where: unknown; data: Record<string, unknown> }>,
   createManyCount: null as number | null,
+  reservationCount: 1,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -38,6 +39,10 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => {
         h.ruleUpdates.push(args);
         return {};
+      }),
+      updateMany: vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => {
+        h.ruleUpdates.push(args);
+        return { count: h.reservationCount };
       }),
     },
     exchangeRate: {
@@ -86,7 +91,23 @@ vi.mock("@/lib/prisma", () => ({
     },
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
       const { prisma } = await import("@/lib/prisma");
-      return fn(prisma);
+      const before = {
+        upserts: h.upserts.length,
+        createManyCalls: h.createManyCalls.length,
+        holdingUpdates: h.holdingUpdates.length,
+        accountUpdates: h.accountUpdates.length,
+        ruleUpdates: h.ruleUpdates.length,
+      };
+      try {
+        return await fn(prisma);
+      } catch (error) {
+        h.upserts.length = before.upserts;
+        h.createManyCalls.length = before.createManyCalls;
+        h.holdingUpdates.length = before.holdingUpdates;
+        h.accountUpdates.length = before.accountUpdates;
+        h.ruleUpdates.length = before.ruleUpdates;
+        throw error;
+      }
     }),
   },
 }));
@@ -127,6 +148,7 @@ describe("materializeDueInvestments", () => {
     h.accountUpdates = [];
     h.ruleUpdates = [];
     h.createManyCount = null;
+    h.reservationCount = 1;
   });
 
   it("buys amount÷price shares and debits cash (same currency)", async () => {
@@ -227,7 +249,7 @@ describe("materializeDueInvestments", () => {
     const result = await materializeDueInvestments(d("2026-06-14"));
 
     expect(result).toEqual({ created: 0, rulesProcessed: 1 });
-    expect(h.upserts).toHaveLength(1);
+    expect(h.upserts).toHaveLength(0);
     expect(h.createManyCalls).toHaveLength(0);
     expect(h.holdingUpdates).toHaveLength(0);
     expect(h.accountUpdates).toHaveLength(0);
@@ -242,6 +264,45 @@ describe("materializeDueInvestments", () => {
     expect(result.created).toBe(1);
     expect(Number(h.holdingUpdates[0].data.quantity.increment)).toBe(5); // 5 * 1
     expect(Number(h.accountUpdates[0].data.cashBalance.decrement)).toBe(1000);
+  });
+
+  it("does not create a holding or reactivate a rule disabled after price resolution", async () => {
+    h.dueRules = [
+      rule({
+        updatedAt: new Date("2026-06-01T01:00:00.000Z"),
+      }),
+    ];
+    // The user's disable won while DCA was awaiting price/holding reads.
+    h.reservationCount = 0;
+
+    const result = await materializeDueInvestments(d("2026-06-14"));
+
+    expect(result).toEqual({ created: 0, rulesProcessed: 1 });
+    expect(h.upserts).toHaveLength(0);
+    expect(h.createManyCalls).toHaveLength(0);
+    expect(h.holdingUpdates).toHaveLength(0);
+    expect(h.accountUpdates).toHaveLength(0);
+    expect(h.ruleUpdates).toHaveLength(1);
+  });
+
+  it("does not buy with an amount changed while DCA awaited price resolution", async () => {
+    h.dueRules = [
+      rule({
+        amount: 1000,
+        updatedAt: new Date("2026-06-01T01:00:00.000Z"),
+      }),
+    ];
+    // A concurrent PATCH changed amount (and therefore updatedAt).
+    h.reservationCount = 0;
+
+    const result = await materializeDueInvestments(d("2026-06-14"));
+
+    expect(result).toEqual({ created: 0, rulesProcessed: 1 });
+    expect(h.upserts).toHaveLength(0);
+    expect(h.createManyCalls).toHaveLength(0);
+    expect(h.holdingUpdates).toHaveLength(0);
+    expect(h.accountUpdates).toHaveLength(0);
+    expect(h.ruleUpdates).toHaveLength(1);
   });
 });
 

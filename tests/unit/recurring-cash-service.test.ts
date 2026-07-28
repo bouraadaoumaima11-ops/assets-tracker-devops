@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   accountUpdates: [] as Array<{ where: unknown; data: unknown }>,
   ruleUpdates: [] as Array<{ where: unknown; data: Record<string, unknown> }>,
   createManyCount: null as number | null, // override inserted count (null = data.length)
+  reservationCount: 1,
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -22,6 +23,10 @@ vi.mock("@/lib/prisma", () => ({
       update: vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => {
         h.ruleUpdates.push(args);
         return {};
+      }),
+      updateMany: vi.fn(async (args: { where: unknown; data: Record<string, unknown> }) => {
+        h.ruleUpdates.push(args);
+        return { count: h.reservationCount };
       }),
     },
     cashTransaction: {
@@ -207,6 +212,7 @@ describe("materializeDueRecurringTransactions", () => {
     h.accountUpdates = [];
     h.ruleUpdates = [];
     h.createManyCount = null;
+    h.reservationCount = 1;
   });
 
   it("posts due occurrences and increments balance by the signed total", async () => {
@@ -299,6 +305,60 @@ describe("materializeDueRecurringTransactions", () => {
     expect(h.accountUpdates).toHaveLength(0);
     expect(h.ruleUpdates[0].data.isActive).toBe(false);
   });
+
+  it("does not post or reactivate a rule disabled after the due-rule read", async () => {
+    h.dueRules = [
+      {
+        id: "rule-disabled-race",
+        accountId: "acc1",
+        type: "DEPOSIT",
+        amount: 100,
+        note: null,
+        frequency: "MONTHLY",
+        startDate: d("2026-06-10"),
+        endDate: null,
+        nextRunDate: d("2026-06-10"),
+        isActive: true,
+        updatedAt: new Date("2026-06-01T01:00:00.000Z"),
+      },
+    ];
+    // The user's disable won before cron entered its posting transaction.
+    h.reservationCount = 0;
+
+    const result = await materializeDueRecurringTransactions(d("2026-06-14"));
+
+    expect(result).toEqual({ created: 0, rulesProcessed: 1 });
+    expect(h.createManyCalls).toHaveLength(0);
+    expect(h.accountUpdates).toHaveLength(0);
+    expect(h.ruleUpdates).toHaveLength(1);
+  });
+
+  it("does not post a stale amount changed after the due-rule read", async () => {
+    h.dueRules = [
+      {
+        id: "rule-amount-race",
+        accountId: "acc1",
+        type: "WITHDRAWAL",
+        amount: 50,
+        note: null,
+        frequency: "WEEKLY",
+        startDate: d("2026-06-10"),
+        endDate: null,
+        nextRunDate: d("2026-06-10"),
+        isActive: true,
+        updatedAt: new Date("2026-06-01T01:00:00.000Z"),
+      },
+    ];
+    // A concurrent PATCH changed amount (and therefore updatedAt).
+    h.reservationCount = 0;
+
+    const result = await materializeDueRecurringTransactions(d("2026-06-14"));
+
+    expect(result).toEqual({ created: 0, rulesProcessed: 1 });
+    expect(h.createManyCalls).toHaveLength(0);
+    expect(h.accountUpdates).toHaveLength(0);
+    expect(h.ruleUpdates).toHaveLength(1);
+  });
 });
 
 describe("materializeDueRecurringTransactions — cutoff & filtering", () => {
@@ -308,6 +368,7 @@ describe("materializeDueRecurringTransactions — cutoff & filtering", () => {
     h.accountUpdates = [];
     h.ruleUpdates = [];
     h.createManyCount = null;
+    h.reservationCount = 1;
   });
 
   it("uses the Taiwan calendar day as the due cutoff", async () => {
