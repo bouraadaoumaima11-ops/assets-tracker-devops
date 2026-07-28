@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const makeTx = () => ({
-    account: { deleteMany: vi.fn() },
+    account: { deleteMany: vi.fn(), create: vi.fn(async () => ({ id: "new_account_1" })) },
     netWorthSnapshot: { deleteMany: vi.fn(), createMany: vi.fn() },
     goal: { deleteMany: vi.fn(), createMany: vi.fn() },
     stockWatchItem: { deleteMany: vi.fn(), createMany: vi.fn() },
@@ -51,7 +51,9 @@ vi.mock("@/lib/rate-limit", () => ({
 
 vi.mock("@/lib/services/exchange-rate-service", () => ({
   refreshExchangeRates: vi.fn(async () => undefined),
-  resolveRate: vi.fn(() => 1),
+  resolveRate: vi.fn((_rateMap: Map<string, number>, fromCurrency: string, toCurrency: string) =>
+    fromCurrency === toCurrency ? 1 : 30,
+  ),
 }));
 
 vi.mock("@/lib/services/price-service", () => ({
@@ -169,6 +171,53 @@ describe("Calendar whole-app backup", () => {
     expect(response.status).toBe(200);
     expect(h.tx.calendarEntry.deleteMany).toHaveBeenCalledWith({ where: { userId: "user_1" } });
     expect(h.tx.calendarEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves remapped mixed-currency snapshot breakdown entries for later FX revaluation", async () => {
+    const response = await importBackup({
+      version: "1.4",
+      settings: { baseCurrency: "TWD", locale: "en-US" },
+      accounts: [
+        {
+          id: "exported_usd_account",
+          name: "US savings",
+          type: "ASSET",
+          category: "BANK",
+          currency: "USD",
+          cashBalance: 100,
+          isActive: true,
+          isPinned: false,
+          sortOrder: 0,
+        },
+      ],
+      snapshots: [
+        {
+          date: "2026-07-01T00:00:00.000Z",
+          totalAssets: 100,
+          totalLiabilities: 0,
+          netWorth: 100,
+          baseCurrency: "USD",
+          breakdown: {
+            exported_usd_account: { value: 100, currency: "USD", type: "CASH" },
+          },
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(h.tx.netWorthSnapshot.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          totalAssets: 3000,
+          totalLiabilities: 0,
+          netWorth: 3000,
+          baseCurrency: "TWD",
+          breakdown: {
+            new_account_1: { value: 100, currency: "USD", type: "CASH" },
+          },
+        }),
+      ],
+    });
   });
 
   it("logs a resolved total price-refresh failure after import warm-up", async () => {
