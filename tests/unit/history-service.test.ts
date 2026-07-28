@@ -10,6 +10,7 @@ interface SnapshotRowFixture {
   totalAssets: number;
   totalLiabilities: number;
   baseCurrency: string;
+  breakdown: unknown;
   label: string | null;
   note: string | null;
 }
@@ -89,6 +90,7 @@ const {
   getAccountMonthlyCashFlow,
   getMonthlyCashFlow,
   getFullNormalizedHistory,
+  getNormalizedHistory,
   getSnapshotReconciliationWarning,
   hasForeignCurrencySnapshots,
   isBetterDuplicate,
@@ -106,6 +108,7 @@ function row(
     totalAssets: 100,
     totalLiabilities: 0,
     baseCurrency: "USD",
+    breakdown: null,
     label: null,
     note: null,
     ...over,
@@ -145,6 +148,113 @@ beforeEach(() => {
 });
 
 describe("getFullNormalizedHistory (normalize + dedupe — locks E2)", () => {
+  it.each([
+    ["default history", () => getNormalizedHistory("u1", "USD")],
+    ["full history", () => getFullNormalizedHistory("u1", "USD")],
+    [
+      "range history",
+      () =>
+        getFullNormalizedHistory("u1", "USD", {
+          from: new Date("2026-01-01T00:00:00.000Z"),
+          to: new Date("2026-01-31T00:00:00.000Z"),
+        }),
+    ],
+  ])("revalues mixed-currency breakdown entries for %s", async (_name, loadHistory) => {
+    h.rows = [
+      row({
+        id: "mixed",
+        date: new Date("2026-01-15T00:00:00.000Z"),
+        netWorth: 170,
+        totalAssets: 250,
+        totalLiabilities: 80,
+        breakdown: {
+          usd: { value: 100, currency: "USD" },
+          eur: { value: 100, currency: "EUR" },
+          debt: { value: 10_000, currency: "JPY" },
+        },
+        label: "Mixed portfolio",
+        note: "Values retain their original currencies.",
+      }),
+    ];
+    h.accounts = [
+      account({ id: "usd", type: "ASSET", currency: "USD" }),
+      account({ id: "eur", type: "ASSET", currency: "EUR" }),
+      account({ id: "debt", type: "LIABILITY", currency: "JPY" }),
+    ];
+    h.rates = new Map([
+      ["USD_EUR", 0.5],
+      ["USD_JPY", 100],
+    ]);
+
+    const result = await loadHistory();
+
+    expect(result).toEqual([
+      {
+        id: "mixed",
+        date: "2026-01-15",
+        createdAt: "2026-01-15T00:00:00.000Z",
+        netWorth: 200,
+        totalAssets: 300,
+        totalLiabilities: 100,
+        baseCurrency: "USD",
+        label: "Mixed portfolio",
+        note: "Values retain their original currencies.",
+      },
+    ]);
+  });
+
+  it("falls back to aggregate conversion when a breakdown account has been deleted", async () => {
+    h.rows = [
+      row({
+        id: "deleted-account",
+        date: new Date("2026-01-15T00:00:00.000Z"),
+        netWorth: 3000,
+        totalAssets: 3300,
+        totalLiabilities: 300,
+        baseCurrency: "TWD",
+        breakdown: {
+          active: { value: 100, currency: "USD" },
+          deleted: { value: 300, currency: "TWD" },
+        },
+      }),
+    ];
+    h.accounts = [account({ id: "active", type: "ASSET" })];
+    h.rates = new Map([["USD_TWD", 30]]);
+
+    const result = await getFullNormalizedHistory("u1", "USD");
+
+    expect(result[0]).toMatchObject({
+      netWorth: 100,
+      totalAssets: 110,
+      totalLiabilities: 10,
+    });
+  });
+
+  it("falls back to aggregate conversion when a breakdown entry is malformed", async () => {
+    h.rows = [
+      row({
+        id: "malformed",
+        date: new Date("2026-01-15T00:00:00.000Z"),
+        netWorth: 3000,
+        totalAssets: 3000,
+        baseCurrency: "TWD",
+        breakdown: {
+          active: { value: null, currency: "USD" },
+        },
+      }),
+    ];
+    h.accounts = [account({ id: "active", type: "ASSET" })];
+    h.rates = new Map([["USD_TWD", 30]]);
+
+    const result = await getFullNormalizedHistory("u1", "USD");
+
+    expect(result[0]).toMatchObject({
+      netWorth: 100,
+      totalAssets: 100,
+      totalLiabilities: 0,
+    });
+  });
+
   it("sorts ascending by date", async () => {
     h.rows = [
       row({ id: "b", date: new Date("2026-02-01T00:00:00.000Z") }),
@@ -395,6 +505,28 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
 });
 
 describe("getSnapshotReconciliationWarning", () => {
+  it("compares current balances with a latest-rate revaluation of the snapshot breakdown", async () => {
+    h.latestSnapshot = row({
+      id: "mixed",
+      date: new Date("2026-01-01T00:00:00.000Z"),
+      netWorth: 500,
+      totalAssets: 500,
+      breakdown: {
+        acc: { value: 500, currency: "EUR" },
+      },
+    });
+    h.accounts = [account({ cashBalance: 1100 })];
+    h.rates = new Map([["USD_EUR", 0.5]]);
+
+    const warning = await getSnapshotReconciliationWarning("u1", "USD");
+
+    expect(warning).toMatchObject({
+      difference: 100,
+      baseCurrency: "USD",
+    });
+    expect(warning?.differencePercent).toBeCloseTo(0.1);
+  });
+
   it("returns a non-mutating warning when current balances drift past the threshold", async () => {
     h.latestSnapshot = row({
       id: "snap",

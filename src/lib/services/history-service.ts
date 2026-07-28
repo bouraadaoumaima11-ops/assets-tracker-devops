@@ -35,6 +35,7 @@ const SNAPSHOT_SELECT = {
   totalAssets: true,
   totalLiabilities: true,
   baseCurrency: true,
+  breakdown: true,
   label: true,
   note: true,
 } as const;
@@ -49,8 +50,14 @@ interface SnapshotRow {
   totalAssets: Decimal;
   totalLiabilities: Decimal;
   baseCurrency: string;
+  breakdown: unknown;
   label: string | null;
   note: string | null;
+}
+
+export interface SnapshotAccountMeta {
+  id: string;
+  type: "ASSET" | "LIABILITY";
 }
 
 /** Tie-break metadata for same-day snapshot dedupes. */
@@ -84,20 +91,25 @@ export function normalizeSnapshots(
   snapshots: SnapshotRow[],
   allRatesMap: Map<string, number>,
   targetBaseCurrency: string,
+  accounts: SnapshotAccountMeta[],
 ): NormalizedSnapshot[] {
   const normalizedMap = new Map<string, DedupeCandidate & { normalized: NormalizedSnapshot }>();
+  const accountTypeMap = new Map(accounts.map((account) => [account.id, account.type]));
 
   for (const s of snapshots) {
     const dateStr = s.date.toISOString().split("T")[0];
-    const rate = resolveRate(allRatesMap, s.baseCurrency, targetBaseCurrency) ?? 1;
+    const breakdownTotals = normalizeBreakdown(
+      s.breakdown,
+      accountTypeMap,
+      allRatesMap,
+      targetBaseCurrency,
+    );
 
     const normalized: NormalizedSnapshot = {
       id: s.id,
       date: dateStr,
       createdAt: s.createdAt.toISOString(),
-      netWorth: Number(s.netWorth) * rate,
-      totalAssets: Number(s.totalAssets) * rate,
-      totalLiabilities: Number(s.totalLiabilities) * rate,
+      ...(breakdownTotals ?? normalizeLegacyAggregates(s, allRatesMap, targetBaseCurrency)),
       baseCurrency: targetBaseCurrency,
       label: s.label,
       note: s.note,
@@ -118,6 +130,67 @@ export function normalizeSnapshots(
 }
 
 /**
+ * Revalue a lossless breakdown only when every entry can be classified.
+ *
+ * Deleted accounts have no trustworthy sign: guessing ASSET or LIABILITY could
+ * silently invert their contribution to net worth. A missing/malformed entry
+ * therefore makes the whole breakdown unusable and preserves the snapshot's
+ * signed aggregate relationship through the legacy conversion path.
+ */
+function normalizeBreakdown(
+  breakdown: unknown,
+  accountTypeMap: Map<string, SnapshotAccountMeta["type"]>,
+  allRatesMap: Map<string, number>,
+  targetBaseCurrency: string,
+): Pick<NormalizedSnapshot, "netWorth" | "totalAssets" | "totalLiabilities"> | null {
+  if (!breakdown || typeof breakdown !== "object" || Array.isArray(breakdown)) return null;
+
+  const entries = Object.entries(breakdown);
+  if (entries.length === 0) return null;
+
+  let totalAssets = 0;
+  let totalLiabilities = 0;
+
+  for (const [accountId, rawEntry] of entries) {
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+    const entry = rawEntry as { value?: unknown; currency?: unknown };
+    const hasNumericValue =
+      typeof entry.value === "number" ||
+      (typeof entry.value === "string" && entry.value.trim().length > 0);
+    const value = hasNumericValue ? Number(entry.value) : Number.NaN;
+    const currency = typeof entry.currency === "string" ? entry.currency.trim() : "";
+    const accountType = accountTypeMap.get(accountId);
+
+    if (!Number.isFinite(value) || !currency || !accountType) return null;
+
+    const rate = resolveRate(allRatesMap, currency, targetBaseCurrency) ?? 1;
+    const convertedValue = value * rate;
+    if (accountType === "ASSET") totalAssets += convertedValue;
+    else totalLiabilities += convertedValue;
+  }
+
+  return {
+    netWorth: totalAssets - totalLiabilities,
+    totalAssets,
+    totalLiabilities,
+  };
+}
+
+function normalizeLegacyAggregates(
+  snapshot: SnapshotRow,
+  allRatesMap: Map<string, number>,
+  targetBaseCurrency: string,
+): Pick<NormalizedSnapshot, "netWorth" | "totalAssets" | "totalLiabilities"> {
+  const rate = resolveRate(allRatesMap, snapshot.baseCurrency, targetBaseCurrency) ?? 1;
+  return {
+    netWorth: Number(snapshot.netWorth) * rate,
+    totalAssets: Number(snapshot.totalAssets) * rate,
+    totalLiabilities: Number(snapshot.totalLiabilities) * rate,
+  };
+}
+
+/**
  * Cache Components read of the default (last-90-day) normalized
  * history. Tagged both globally (`snapshots`, `net-worth`) and
  * per-user (`history:${userId}`) so cron snapshot + account mutations
@@ -131,22 +204,28 @@ export async function getNormalizedHistory(
   cacheTag("snapshots");
   cacheTag("net-worth");
   cacheTag(`history:${userId}`);
+  cacheTag("accounts");
+  cacheTag(`accounts:${userId}`);
   cacheTag("exchange-rates");
   cacheLife("hours");
 
   const fromDate = new Date();
   fromDate.setDate(fromDate.getDate() - DEFAULT_HISTORY_DAYS);
 
-  const [snapshotsRaw, allRatesMap] = await Promise.all([
+  const [snapshotsRaw, accountsRaw, allRatesMap] = await Promise.all([
     prisma.netWorthSnapshot.findMany({
       where: { userId, date: { gte: fromDate } },
       select: SNAPSHOT_SELECT,
       orderBy: { date: "asc" },
     }),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, type: true },
+    }),
     getAllExchangeRates(),
   ]);
 
-  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency);
+  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency, accountsRaw);
 }
 
 /**
@@ -174,19 +253,25 @@ async function fetchFullHistoryCached(
   cacheTag("snapshots");
   cacheTag("net-worth");
   cacheTag(`history:${userId}`);
+  cacheTag("accounts");
+  cacheTag(`accounts:${userId}`);
   cacheTag("exchange-rates");
   cacheLife("hours");
 
-  const [snapshotsRaw, allRatesMap] = await Promise.all([
+  const [snapshotsRaw, accountsRaw, allRatesMap] = await Promise.all([
     prisma.netWorthSnapshot.findMany({
       where: { userId },
       select: SNAPSHOT_SELECT,
       orderBy: { date: "asc" },
     }),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, type: true },
+    }),
     getAllExchangeRates(),
   ]);
 
-  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency);
+  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency, accountsRaw);
 }
 
 async function fetchFullHistoryRange(
@@ -199,16 +284,20 @@ async function fetchFullHistoryRange(
   if (options.from) where.date.gte = options.from;
   if (options.to) where.date.lte = options.to;
 
-  const [snapshotsRaw, allRatesMap] = await Promise.all([
+  const [snapshotsRaw, accountsRaw, allRatesMap] = await Promise.all([
     prisma.netWorthSnapshot.findMany({
       where,
       select: SNAPSHOT_SELECT,
       orderBy: { date: "asc" },
     }),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, type: true },
+    }),
     getAllExchangeRates(),
   ]);
 
-  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency);
+  return normalizeSnapshots(snapshotsRaw, allRatesMap, targetBaseCurrency, accountsRaw);
 }
 
 export async function getSnapshotReconciliationWarning(
@@ -220,27 +309,33 @@ export async function getSnapshotReconciliationWarning(
   cacheTag("net-worth");
   cacheTag(`history:${userId}`);
   cacheTag(`net-worth:${userId}`);
+  cacheTag("accounts");
+  cacheTag(`accounts:${userId}`);
   cacheTag("exchange-rates");
   cacheLife("minutes");
 
-  const [latestSnapshot, currentSummary, allRatesMap] = await Promise.all([
+  const [latestSnapshot, currentSummary, accountsRaw, allRatesMap] = await Promise.all([
     prisma.netWorthSnapshot.findFirst({
       where: { userId },
       select: SNAPSHOT_SELECT,
       orderBy: [{ date: "desc" }, { createdAt: "desc" }],
     }),
     getCachedNetWorthSummary(userId, targetBaseCurrency),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, type: true },
+    }),
     getAllExchangeRates(),
   ]);
 
   if (!latestSnapshot) return null;
 
-  const rate =
-    resolveRate(allRatesMap, latestSnapshot.baseCurrency, targetBaseCurrency) ??
-    (latestSnapshot.baseCurrency === targetBaseCurrency ? 1 : undefined);
-  if (rate === undefined) return null;
-
-  const snapshotNetWorth = Number(latestSnapshot.netWorth) * rate;
+  const snapshotNetWorth = normalizeSnapshots(
+    [latestSnapshot],
+    allRatesMap,
+    targetBaseCurrency,
+    accountsRaw,
+  )[0].netWorth;
   const currentNetWorth = currentSummary.netWorth;
   const difference = currentNetWorth - snapshotNetWorth;
   const denominator = Math.max(Math.abs(snapshotNetWorth), 1);
