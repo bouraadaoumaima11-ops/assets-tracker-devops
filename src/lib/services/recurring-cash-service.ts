@@ -16,9 +16,8 @@ import type { RecurringFrequency } from "@/generated/prisma/client";
  * successful run, so a skipped/failed cron day self-heals on the next run.
  *
  * All date math is in UTC and operates on calendar days only — `@db.Date`
- * columns come back as UTC-midnight `Date`s, and occurrences post at the cron's
- * run time (the `createdAt` is backdated to the occurrence day so history
- * groups them on the correct calendar date).
+ * columns come back as UTC-midnight `Date`s. `occurrenceDate` preserves that
+ * reporting day while `createdAt` records when the balance actually changed.
  */
 
 /** Floors a Date to UTC midnight (calendar-day granularity). */
@@ -200,8 +199,6 @@ export async function materializeDueRecurringTransactions(
             note: rule.note,
             recurringId: rule.id,
             occurrenceDate: d,
-            // Backdate so the row groups under its occurrence day in history.
-            createdAt: d,
           })),
           skipDuplicates: true,
         });

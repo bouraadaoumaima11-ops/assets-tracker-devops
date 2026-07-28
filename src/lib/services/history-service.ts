@@ -493,9 +493,11 @@ export async function getAccountMonthlyCashFlow(
   // aligns the contribution window with that baseline, so only flows that
   // occurred AFTER the starting snapshot are attributed to the first bucket.
   // (Months before the first snapshot are unreachable by the analysis UI, so
-  // this also preserves PE29's scan-narrowing intent.) The floor compares
-  // against the effective date (occurrenceDate ?? createdAt) to match the
-  // month-key bucketing below.
+  // this also preserves PE29's scan-narrowing intent.) Manual rows retain the
+  // effective-date boundary (occurrenceDate ?? createdAt) from #509/#551.
+  // Recurring rows instead use createdAt for inclusion because occurrenceDate
+  // is a business-day bucket that can be later than the wall-clock snapshot;
+  // bucketing below still uses occurrenceDate.
   const floor = firstSnapshot ? (firstSnapshot.createdAt ?? firstSnapshot.date) : null;
 
   const transactions = await prisma.cashTransaction.findMany({
@@ -505,19 +507,50 @@ export async function getAccountMonthlyCashFlow(
       ...(floor
         ? {
             OR: [
-              { occurrenceDate: { gt: floor } },
-              { occurrenceDate: null, createdAt: { gt: floor } },
+              // Recurring rows use occurrenceDate only for reporting. Their
+              // creation instant says whether the balance changed after the
+              // baseline and keeps late catch-up postings in scope.
+              { recurringId: { not: null }, createdAt: { gt: floor } },
+              // Manual/backdated flows preserve the #509/#551 effective-date
+              // boundary.
+              { recurringId: null, occurrenceDate: { gt: floor } },
+              { recurringId: null, occurrenceDate: null, createdAt: { gt: floor } },
             ],
           }
         : {}),
     },
-    select: { amount: true, type: true, createdAt: true, occurrenceDate: true, accountId: true },
+    select: {
+      amount: true,
+      type: true,
+      createdAt: true,
+      occurrenceDate: true,
+      recurringId: true,
+      accountId: true,
+    },
     orderBy: { createdAt: "asc" },
   });
 
   const byKey = new Map<string, number>();
 
   for (const tx of transactions) {
+    // A recurring row's occurrenceDate is a business-day bucket, not the
+    // instant its balance changed. New rows keep their real createdAt, so that
+    // timestamp says whether the balance changed after the baseline.
+    //
+    // Before #658 the materializer set createdAt === occurrenceDate. For those
+    // legacy rows the actual posting instant is irretrievable, but the daily
+    // cron's order is deterministic: occurrences on/before the first
+    // snapshot's business day were materialized into that snapshot. Comparing
+    // like-for-like business days repairs those stored rows without changing
+    // manual/backdated transaction semantics.
+    if (floor && firstSnapshot && tx.recurringId) {
+      const isLegacyBackdated = tx.occurrenceDate?.getTime() === tx.createdAt.getTime();
+      const isAfterBaseline = isLegacyBackdated
+        ? tx.occurrenceDate!.getTime() > firstSnapshot.date.getTime()
+        : tx.createdAt.getTime() > floor.getTime();
+      if (!isAfterBaseline) continue;
+    }
+
     // Bucket by when the cash flow actually happened (occurrenceDate), falling
     // back to createdAt for legacy rows that never recorded one (#498).
     const monthKey = (tx.occurrenceDate ?? tx.createdAt).toISOString().slice(0, 7);
