@@ -616,11 +616,12 @@ async function refreshPricesForHoldings(
     .map((h) => h.symbol);
 
   const cryptoSymbols = holdings.filter((h) => h.assetType === "CRYPTO").map((h) => h.symbol);
+  const supportedDueSymbols = new Set([...stockSymbols, ...cryptoSymbols]);
 
   // OTHER holdings intentionally have no market-data provider. They are not a
   // failed refresh target; release any stale-row claim and preserve the normal
   // no-work success semantics.
-  if (stockSymbols.length === 0 && cryptoSymbols.length === 0) {
+  if (supportedDueSymbols.size === 0) {
     await releaseClaims(claimedSymbols);
     return {
       outcome: "no_due_symbols",
@@ -658,13 +659,13 @@ async function refreshPricesForHoldings(
 
   const allPrices = new Map([...stockPrices, ...cryptoPrices]);
 
-  const entries = [...allPrices];
+  const entries = [...allPrices].filter(([symbol]) => supportedDueSymbols.has(symbol));
   if (entries.length === 0) {
     // No prices came back (all fetches failed). Release claims so the next
     // request can retry rather than waiting for the 30s dead-instance TTL.
     await releaseClaims(claimedSymbols);
     if (errors.length === 0) {
-      errors.push(`No usable prices returned for ${holdings.length} due symbols`);
+      errors.push(`No usable prices returned for ${supportedDueSymbols.size} due symbols`);
     }
     return {
       outcome: "total_failure",
@@ -677,6 +678,7 @@ async function refreshPricesForHoldings(
     };
   }
 
+  let bulkUpsertFailed = false;
   try {
     const currentRows = await prisma.priceCache.findMany({
       where: { symbol: { in: entries.map(([symbol]) => symbol) } },
@@ -718,15 +720,16 @@ async function refreshPricesForHoldings(
     const fetchedSet = new Set(entries.map(([symbol]) => symbol));
     await releaseClaims(claimedSymbols.filter((symbol) => !fetchedSet.has(symbol)));
   } catch (error) {
+    bulkUpsertFailed = true;
     errors.push(`Bulk upsert failed: ${String(error)}`);
     // Release claims so the next request can retry immediately.
     await releaseClaims(claimedSymbols);
   }
 
   return {
-    outcome: errors.some((error) => error.startsWith("Bulk upsert failed"))
+    outcome: bulkUpsertFailed
       ? "total_failure"
-      : entries.length < holdings.length
+      : entries.length < supportedDueSymbols.size
         ? "partial_success"
         : "success",
     updated,

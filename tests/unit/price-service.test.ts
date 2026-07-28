@@ -143,6 +143,27 @@ describe("refreshAllPrices — cron-wide symbol collection", () => {
     expect(result.updated).toBe(0);
     expect(getYahooClient).not.toHaveBeenCalled();
   });
+
+  it("reports success when supported due symbols refresh alongside unsupported or duplicate holdings", async () => {
+    vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([
+      { symbol: "AAPL", assetType: "STOCK" },
+      { symbol: "AAPL", assetType: "STOCK" },
+      { symbol: "PRIVATE-LOAN", assetType: "OTHER" },
+    ] as never);
+    vi.mocked(prisma.stockWatchItem.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.priceCache.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValueOnce(1 as never);
+
+    const result = await refreshAllPrices();
+
+    expect(result.updated).toBe(1);
+    expect(result.outcome).toBe("success");
+  });
 });
 
 describe("refreshPricesForStockSymbols — claim deduplication", () => {
@@ -241,6 +262,29 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(cleanupCall).toBeDefined();
     expect(result.updated).toBe(0);
     expect(result.errors).toEqual([expect.stringContaining("client initialization failed")]);
+  });
+
+  it("returns total_failure when the bulk price upsert fails", async () => {
+    const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
+    vi.mocked(prisma.priceCache.findMany)
+      .mockResolvedValueOnce([{ symbol: "AAPL", updatedAt: staleDate }] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([{ symbol: "AAPL" }]);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe)
+      .mockRejectedValueOnce(new Error("database write unavailable"))
+      .mockResolvedValueOnce(1 as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result.outcome).toBe("total_failure");
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("Bulk upsert failed")]),
+    );
   });
 
   it("releases only the unfetched claim on a partial fetch (one ticker missing)", async () => {

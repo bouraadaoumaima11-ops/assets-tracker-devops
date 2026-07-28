@@ -50,6 +50,7 @@ export async function GET(request: Request) {
   let cronAgeMs: number | null = null;
   let latestPriceAt: string | null = null;
   let priceAgeMs: number | null = null;
+  let emptyCacheHasPriceableAssets = false;
 
   try {
     // Lightweight liveness check + most-recent snapshot freshness + latest
@@ -83,6 +84,20 @@ export async function GET(request: Request) {
     if (latestPrice._max.updatedAt) {
       latestPriceAt = latestPrice._max.updatedAt.toISOString();
       priceAgeMs = now - latestPrice._max.updatedAt.getTime();
+    } else {
+      // An empty cache is healthy only when there is nothing that should have
+      // fetched a market quote. Keep this to two `SELECT ... LIMIT 1`-shaped
+      // existence queries, and run them only on the empty-cache path.
+      const [priceableHolding, priceableWatch] = await Promise.all([
+        prisma.holding.findFirst({
+          where: { assetType: { in: ["STOCK", "ETF", "CRYPTO", "MUTUAL_FUND", "BOND", "OPTION"] } },
+          select: { id: true },
+        }),
+        prisma.stockWatchItem.findFirst({ select: { id: true } }),
+      ]);
+      if (priceableHolding || priceableWatch) {
+        emptyCacheHasPriceableAssets = true;
+      }
     }
   } catch (error) {
     log.error("health.db_unreachable", { error: String(error) });
@@ -90,14 +105,18 @@ export async function GET(request: Request) {
 
   const snapshotFresh = snapshotAgeMs !== null && snapshotAgeMs <= FRESHNESS_MAX_AGE_MS;
   const cronFresh = cronAgeMs !== null && cronAgeMs <= FRESHNESS_MAX_AGE_MS;
-  const priceFresh = priceAgeMs === null || priceAgeMs <= FRESHNESS_MAX_AGE_MS;
+  const priceFresh =
+    priceAgeMs === null ? !emptyCacheHasPriceableAssets : priceAgeMs <= FRESHNESS_MAX_AGE_MS;
 
-  // An empty PriceCache is healthy for a new/asset-free installation; once it
-  // has data, its newest quote must be within the same freshness window.
+  // An empty PriceCache is healthy only for an asset-free installation. If a
+  // holding/watchlist needs a quote but the cache is empty, it is an
+  // operator-visible stale condition.
   const priceCache = !dbOk
     ? "unknown"
     : priceAgeMs === null
-      ? "empty"
+      ? emptyCacheHasPriceableAssets
+        ? "stale"
+        : "empty"
       : priceFresh
         ? "ok"
         : "stale";

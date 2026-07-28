@@ -5,6 +5,8 @@ const h = vi.hoisted(() => ({
   latestSnapshotAt: null as Date | null,
   latestCronAt: null as Date | null,
   latestPriceAt: null as Date | null,
+  hasPriceableHolding: false,
+  hasPriceableWatch: false,
 }));
 
 vi.mock("@/lib/rate-limit", () => ({ rateLimitCheckWithPrune: vi.fn(() => null) }));
@@ -26,6 +28,12 @@ vi.mock("@/lib/prisma", () => ({
     priceCache: {
       aggregate: vi.fn(async () => ({ _max: { updatedAt: h.latestPriceAt } })),
     },
+    holding: {
+      findFirst: vi.fn(async () => (h.hasPriceableHolding ? { id: "holding-1" } : null)),
+    },
+    stockWatchItem: {
+      findFirst: vi.fn(async () => (h.hasPriceableWatch ? { id: "watch-1" } : null)),
+    },
   },
 }));
 
@@ -40,6 +48,8 @@ describe("health route price freshness", () => {
     h.latestSnapshotAt = now;
     h.latestCronAt = now;
     h.latestPriceAt = now;
+    h.hasPriceableHolding = false;
+    h.hasPriceableWatch = false;
   });
 
   afterEach(() => {
@@ -74,7 +84,22 @@ describe("health route price freshness", () => {
     });
   });
 
-  it("reports an empty cache without degrading a genuinely empty installation", async () => {
+  it("degrades an empty cache when a priceable holding exists", async () => {
+    h.latestPriceAt = null;
+    h.hasPriceableHolding = true;
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET(new Request("http://unit.test/api/health"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "degraded",
+      priceCache: "stale",
+      latestPriceAt: null,
+      priceAgeMs: null,
+    });
+  });
+
+  it("reports an empty cache without degrading an installation with no priceable assets", async () => {
     h.latestPriceAt = null;
     const { GET } = await import("@/app/api/health/route");
     const response = await GET(new Request("http://unit.test/api/health"));
