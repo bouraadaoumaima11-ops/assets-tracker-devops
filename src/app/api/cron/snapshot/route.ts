@@ -34,6 +34,8 @@ const RATE_REFRESH_CONCURRENCY = 5;
 const SNAPSHOT_CONCURRENCY = 10;
 /** Users whose accounts/holdings are held in memory at once. */
 const USER_PAGE_SIZE = 200;
+/** Stop scheduling work before Vercel's 60 s hard kill so audit writes can finish. */
+const SNAPSHOT_BUDGET_MS = 50_000;
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -174,12 +176,7 @@ export async function GET(request: Request) {
       revalidateTag("accounts", "max");
     }
 
-    // 2. Get all users and their settings
-    const users = await prisma.user.findMany({
-      select: { id: true, appSettings: { select: { baseCurrency: true } } },
-    });
-
-    // 3. Snapshot every user.
+    // 2. Snapshot users page by page.
     //
     // All reads are bulk (#641): the FX map is global so it is loaded once for
     // the whole run, and each page of users costs one accounts+holdings query
@@ -195,43 +192,70 @@ export async function GET(request: Request) {
     const snapshots: Awaited<ReturnType<typeof createSnapshot>>[] = [];
     const successfulUserIds: string[] = [];
     const failedUserIds: string[] = [];
+    let usersDiscovered = 0;
+    let userCursor: string | undefined;
+    let budgetExhausted = false;
 
-    for (const page of chunk(users, USER_PAGE_SIZE)) {
+    while (true) {
+      if (Date.now() - startedAt.getTime() >= SNAPSHOT_BUDGET_MS) {
+        budgetExhausted = true;
+        break;
+      }
+      const page = await prisma.user.findMany({
+        select: { id: true, appSettings: { select: { baseCurrency: true } } },
+        orderBy: { id: "asc" },
+        take: USER_PAGE_SIZE,
+        ...(userCursor && { cursor: { id: userCursor }, skip: 1 }),
+      });
+      if (page.length === 0) break;
+      usersDiscovered += page.length;
+
       const inputs = await loadNetWorthInputsForUsers(
         page.map((user) => user.id),
         ratesMap,
       );
-      // Only the upsert is left per user, so the cap here bounds concurrent
-      // writes rather than whole read-compute-write pipelines.
-      const pageResults = await mapSettled(page, SNAPSHOT_CONCURRENCY, async (user) => {
-        const baseCurrency = user.appSettings?.baseCurrency ?? "USD";
-        const snapshot = await createSnapshot(user.id, baseCurrency, {
-          fresh: true,
-          preloaded: inputs.get(user.id),
-        });
-        return { userId: user.id, snapshot };
-      });
 
-      for (let i = 0; i < pageResults.length; i++) {
-        const result = pageResults[i];
-        if (result.status === "fulfilled") {
-          snapshots.push(result.value.snapshot);
-          successfulUserIds.push(result.value.userId);
-        } else {
-          failedUserIds.push(page[i].id);
-          log.warn("cron.snapshot.user_failed", {
-            userId: page[i].id,
-            error: String(result.reason),
+      // Only the upsert is left per user. Fixed waves bound concurrent writes
+      // and give the wall-clock guard a chance to stop between waves.
+      for (const wave of chunk(page, SNAPSHOT_CONCURRENCY)) {
+        if (Date.now() - startedAt.getTime() >= SNAPSHOT_BUDGET_MS) {
+          budgetExhausted = true;
+          break;
+        }
+        const waveResults = await mapSettled(wave, SNAPSHOT_CONCURRENCY, async (user) => {
+          const baseCurrency = user.appSettings?.baseCurrency ?? "USD";
+          const snapshot = await createSnapshot(user.id, baseCurrency, {
+            fresh: true,
+            preloaded: inputs.get(user.id),
           });
+          return { userId: user.id, snapshot };
+        });
+
+        for (let i = 0; i < waveResults.length; i++) {
+          const result = waveResults[i];
+          if (result.status === "fulfilled") {
+            snapshots.push(result.value.snapshot);
+            successfulUserIds.push(result.value.userId);
+          } else {
+            failedUserIds.push(wave[i].id);
+            log.warn("cron.snapshot.user_failed", {
+              userId: wave[i].id,
+              error: String(result.reason),
+            });
+          }
         }
       }
+      if (budgetExhausted) break;
+      if (page.length < USER_PAGE_SIZE) break;
+      userCursor = page[page.length - 1].id;
     }
     log.info("cron.snapshot.summary", {
-      users: users.length,
+      users: usersDiscovered,
       created: snapshots.length,
       failed: failedUserIds.length,
+      budgetExhausted,
     });
-    if (users.length > 0 && failedUserIds.length === users.length) {
+    if (!budgetExhausted && usersDiscovered > 0 && failedUserIds.length === usersDiscovered) {
       throw new Error(`Snapshot failed for users: ${failedUserIds.join(", ")}`);
     }
 
@@ -242,25 +266,31 @@ export async function GET(request: Request) {
     }
 
     const finishedAt = new Date();
-    const snapshotError =
-      failedUserIds.length > 0 ? `Snapshot failed for users: ${failedUserIds.join(", ")}` : null;
+    const processedUsers = successfulUserIds.length + failedUserIds.length;
+    const snapshotError = budgetExhausted
+      ? `Snapshot budget exhausted after processing ${processedUsers} of at least ${usersDiscovered} users`
+      : failedUserIds.length > 0
+        ? `Snapshot failed for users: ${failedUserIds.join(", ")}`
+        : null;
     await prisma.cronRun.update({
       where: { id: cronRun.id },
       data: {
-        ok: true,
+        ok: !budgetExhausted,
         finishedAt,
         durationMs: finishedAt.getTime() - startedAt.getTime(),
         ...(snapshotError && { error: snapshotError }),
       },
     });
-    finishSnapshotCronCheckIn(checkIn, "ok");
+    finishSnapshotCronCheckIn(checkIn, budgetExhausted ? "error" : "ok");
 
-    return ok({
-      success: true,
-      snapshotIds: snapshots.map((s) => s.id),
-      failedUserIds,
-      timestamp: finishedAt.toISOString(),
-    });
+    return budgetExhausted
+      ? failure(snapshotError ?? "Snapshot budget exhausted", 503)
+      : ok({
+          success: true,
+          snapshotIds: snapshots.map((s) => s.id),
+          failedUserIds,
+          timestamp: finishedAt.toISOString(),
+        });
   } catch (error) {
     log.error("cron.snapshot.failed", { error: String(error) });
     const finishedAt = new Date();
