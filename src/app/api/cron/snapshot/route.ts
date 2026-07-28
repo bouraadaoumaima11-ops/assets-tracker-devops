@@ -44,6 +44,7 @@ export async function GET(request: Request) {
   }
 
   const startedAt = new Date();
+  const businessDay = taiwanCalendarDay(startedAt);
   const checkIn = startSnapshotCronCheckIn();
   let cronRun: { id: string } | null = null;
 
@@ -56,14 +57,14 @@ export async function GET(request: Request) {
       select: { id: true },
     });
 
-    // 0. Sweep expired option contracts so the snapshot doesn't include them
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+    // 0. Sweep contracts that expired before this run's Taiwan business day so
+    // the snapshot does not carry yesterday's options into today's valuation.
+    // A contract expiring on businessDay remains active through that day.
     let expiredOptionsChanged = false;
     const expiredOptions = await prisma.holding.findMany({
       where: {
         assetType: "OPTION",
-        expiration: { lt: today },
+        expiration: { lt: businessDay },
         quantity: { gt: 0 },
       },
     });
@@ -154,7 +155,6 @@ export async function GET(request: Request) {
     // Materialize against the TAIWAN business day so a rule due "today"
     // (Taipei) posts in the same run whose snapshot is stamped with that day —
     // at 21:30 UTC the raw UTC day is still yesterday in Taipei.
-    const businessDay = taiwanCalendarDay(new Date());
     const recurring = await materializeDueRecurringTransactions(businessDay);
     if (recurring.rulesProcessed > 0) {
       log.info("cron.recurring.summary", recurring);
@@ -235,6 +235,7 @@ export async function GET(request: Request) {
           const snapshot = await createSnapshot(user.id, baseCurrency, {
             fresh: true,
             preloaded: inputs.get(user.id),
+            businessDay,
           });
           return { userId: user.id, snapshot };
         });

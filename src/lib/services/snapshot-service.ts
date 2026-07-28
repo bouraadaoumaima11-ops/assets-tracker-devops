@@ -21,11 +21,14 @@ import { taiwanCalendarDay } from "@/lib/app-day";
  * `preloaded` carries inputs the caller already bulk-loaded, so a multi-user
  * sweep costs a fixed number of queries instead of three per user (#641). It
  * only changes where the data comes from, never the arithmetic.
+ *
+ * `businessDay` lets a batch caller keep every snapshot on the calendar day
+ * captured when the run began, even if later work crosses a day boundary.
  */
 export async function createSnapshot(
   userId: string,
   baseCurrency: string,
-  opts: { fresh?: boolean; preloaded?: NetWorthInputs } = {},
+  opts: { fresh?: boolean; preloaded?: NetWorthInputs; businessDay?: Date } = {},
 ) {
   const summary =
     opts.fresh || opts.preloaded
@@ -42,7 +45,7 @@ export async function createSnapshot(
   // bucketing elsewhere in the app (history table, heatmap, projections) that a
   // Taipei user actually sees. The result is still a fixed UTC-midnight Date, so
   // the `userId_date_baseCurrency` upsert key stays timezone-independent.
-  const today = taiwanCalendarDay(snapshotTakenAt);
+  const today = opts.businessDay ?? taiwanCalendarDay(snapshotTakenAt);
 
   const breakdown = Object.fromEntries(
     summary.accounts.map((a) => [a.id, { value: a.totalValue, currency: a.currency }]),
