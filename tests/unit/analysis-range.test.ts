@@ -1,11 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { computePerformanceAttribution } from "@/lib/services/analysis-service";
 import { resolveAnalysisRange } from "@/components/analysis/analysis-range";
-import type {
-  AccountMeta,
-  AccountMonthlyContribution,
-  SnapshotBreakdown,
-} from "@/lib/services/history-service";
+import type { AccountMonthlyContribution, SnapshotBreakdown } from "@/lib/services/history-service";
 
 const originalTimezone = process.env.TZ;
 
@@ -47,7 +43,9 @@ describe("resolveAnalysisRange", () => {
       { date: "2026-01-01", accountValues: { brokerage: 100 } },
       { date: "2026-07-28", accountValues: { brokerage: 160 } },
     ];
-    const accounts: AccountMeta[] = [{ id: "brokerage", name: "Brokerage", category: "BROKERAGE" }];
+    const accounts = [
+      { id: "brokerage", name: "Brokerage", category: "BROKERAGE", type: "ASSET" as const },
+    ];
     const cashFlows: AccountMonthlyContribution[] = [
       { accountId: "brokerage", monthKey: "2025-12", contributions: 1_000 },
     ];
