@@ -181,36 +181,6 @@ function normalizeSnapshotBreakdown(
   return value as Prisma.InputJsonValue;
 }
 
-function normalizeSnapshotBreakdownCurrency(
-  value: ImportSnapshot["breakdown"],
-  rateMap: Map<string, number>,
-  targetBaseCurrency: string,
-): ImportSnapshot["breakdown"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-
-  const normalized: Record<string, unknown> = {};
-  for (const [accountId, entry] of Object.entries(value)) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      normalized[accountId] = entry;
-      continue;
-    }
-
-    const rawEntry = entry as { value?: unknown; currency?: unknown };
-    const currency = typeof rawEntry.currency === "string" ? rawEntry.currency : "USD";
-    const rate = resolveRate(rateMap, currency, targetBaseCurrency);
-    const valueNumber =
-      typeof rawEntry.value === "number" ? rawEntry.value : Number(rawEntry.value ?? 0);
-
-    normalized[accountId] = {
-      ...rawEntry,
-      value: rate ? valueNumber * rate : rawEntry.value,
-      currency: rate ? targetBaseCurrency : currency,
-    };
-  }
-
-  return normalized;
-}
-
 function normalizeSnapshotAmount(
   value: string | number,
   fromCurrency: string,
@@ -507,11 +477,7 @@ export const POST = withAuth(async (request, _ctx, userId) => {
                 ),
                 baseCurrency: targetBaseCurrency,
                 breakdown: normalizeSnapshotBreakdown(
-                  normalizeSnapshotBreakdownCurrency(
-                    remapSnapshotBreakdown(s.breakdown, accountIdMap),
-                    rateMap,
-                    targetBaseCurrency,
-                  ),
+                  remapSnapshotBreakdown(s.breakdown, accountIdMap),
                 ),
                 label: s.label?.trim() || null,
                 note: s.note?.trim() || null,
