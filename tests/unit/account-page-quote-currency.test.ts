@@ -118,7 +118,7 @@ describe("account pages use the cached quote currency", () => {
     expect(html).not.toContain("$50,000");
   });
 
-  it("renders the account-detail holding value in account currency", async () => {
+  it("renders detail market value in account currency and raw quotes in quote currency", async () => {
     const { AccountDetail } = await import("@/components/accounts/account-detail");
 
     const html = renderToStaticMarkup(
@@ -130,6 +130,8 @@ describe("account pages use the cached quote currency", () => {
     );
 
     expect(html).toContain("$55,000");
+    expect(html.match(/€50,000/g)).toHaveLength(2);
+    expect(html).not.toContain("$50,000");
   });
 
   it("falls back to the holding currency when a cached quote has no currency", async () => {

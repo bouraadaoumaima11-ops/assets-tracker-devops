@@ -128,7 +128,12 @@ export function AccountDetail({
             : (ratesMap[`${quoteCurrency}_${account.currency}`] ?? 1);
         const multiplier = h.assetType === "OPTION" ? (h.contractMultiplier ?? 100) : 1;
         const marketValue = price !== null ? price * h.quantity * multiplier * rate : null;
-        return { ...h, currentPrice: price, marketValue };
+        return {
+          ...h,
+          currentPrice: price,
+          currentPriceCurrency: price !== null ? quoteCurrency : null,
+          marketValue,
+        };
       }),
     [account.holdings, account.currency, priceMap, ratesMap],
   );
