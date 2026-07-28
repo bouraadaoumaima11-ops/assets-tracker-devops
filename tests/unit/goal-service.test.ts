@@ -62,11 +62,13 @@ vi.mock("@/lib/prisma", () => ({
             totalAssets: s.totalAssets,
             totalLiabilities: 0,
             baseCurrency: s.baseCurrency ?? "USD",
+            breakdown: null,
             label: null,
             note: null,
           })),
       ),
     },
+    account: { findMany: vi.fn(async () => []) },
   },
 }));
 vi.mock("@/lib/services/net-worth-service", () => ({

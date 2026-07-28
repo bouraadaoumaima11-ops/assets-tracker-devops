@@ -35,12 +35,16 @@ export async function getProjectionData(
         totalAssets: true,
         totalLiabilities: true,
         baseCurrency: true,
+        breakdown: true,
         label: true,
         note: true,
       },
       orderBy: { date: "asc" },
     }),
-    prisma.account.findMany({ where: { userId }, select: { id: true, currency: true } }),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, currency: true, type: true },
+    }),
     getAllExchangeRates(),
   ]);
 
@@ -48,7 +52,7 @@ export async function getProjectionData(
     return { latestNetWorth: 0, trailing12mSavings: 0, annualSnapshots: [], hasData: false };
   }
 
-  const normalized = normalizeSnapshots(snapshotsRaw, allRatesMap, baseCurrency);
+  const normalized = normalizeSnapshots(snapshotsRaw, allRatesMap, baseCurrency, accountsRaw);
 
   const latestNetWorth = normalized[normalized.length - 1].netWorth;
 

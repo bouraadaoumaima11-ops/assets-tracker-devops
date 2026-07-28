@@ -40,6 +40,9 @@ When history is displayed, the service:
 3. Falls back to converting legacy snapshot totals when no lossless breakdown exists.
 
 This preserves a continuous chart without discarding the source amounts that produced earlier snapshots.
+Reconstructing signed totals also requires current account-type metadata. If any breakdown entry is
+malformed or its account has been deleted, the service converts that snapshot's stored aggregates
+instead of guessing whether the unclassified value was an asset or liability.
 
 ## Market-data pipeline
 
