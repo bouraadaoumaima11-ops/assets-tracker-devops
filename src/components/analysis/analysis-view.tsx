@@ -41,6 +41,7 @@ import {
   LazyReturnTrendChart,
   LazyDrawdownChart,
 } from "./lazy-analysis-charts";
+import { resolveAnalysisRange } from "./analysis-range";
 import { KpiTiles } from "./kpi-tiles";
 import { AnalysisEmptyState } from "./analysis-empty-state";
 
@@ -64,14 +65,6 @@ const ranges = [
 ] as const;
 
 type RangeLabel = (typeof ranges)[number]["label"];
-
-function rangeCutoff(months: number): Date {
-  const d = new Date();
-  d.setMonth(d.getMonth() - months);
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 // First-visit default. YTD is the conventional choice, but it reads as a near-empty
 // chart when there is little history or the year just started, so widen in those cases.
@@ -138,52 +131,7 @@ export function AnalysisView({
 
   const { filteredSnapshots, rangeStart, rangeEnd, rangeStartIso } = useMemo(() => {
     const selected = ranges.find((r) => r.label === range)!;
-    const now = new Date();
-
-    if (selected.months === 0) {
-      const year = now.getFullYear();
-      const rangeStart = new Date(Date.UTC(year, 0, 1));
-      // End at the current month, not December, so the axis doesn't pad half a
-      // year of empty future months into the chart.
-      const rangeEnd = new Date(Date.UTC(year, now.getMonth(), 1));
-      const rangeStartIso = `${year}-01-01`;
-      return {
-        filteredSnapshots: snapshots.filter((s) => s.date >= rangeStartIso),
-        rangeStart,
-        rangeEnd,
-        rangeStartIso,
-      };
-    }
-
-    const rangeEnd = new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
-
-    if (selected.months === Infinity) {
-      const firstDate = snapshots.length > 0 ? new Date(snapshots[0].date) : now;
-      // firstDate from a snapshot is UTC-midnight; use UTC getters so the range
-      // starts on its UTC month (matching the snapshot buckets) rather than a
-      // phantom prior month west of UTC. The `now` fallback is a local instant,
-      // but with no snapshots the range is unused.
-      const rangeStart =
-        snapshots.length > 0
-          ? new Date(Date.UTC(firstDate.getUTCFullYear(), firstDate.getUTCMonth(), 1))
-          : new Date(Date.UTC(firstDate.getFullYear(), firstDate.getMonth(), 1));
-      return {
-        filteredSnapshots: snapshots,
-        rangeStart,
-        rangeEnd,
-        rangeStartIso: snapshots.length > 0 ? snapshots[0].date : "1970-01-01",
-      };
-    }
-
-    const cutoff = rangeCutoff(selected.months);
-    const rangeStartIso = cutoff.toISOString().split("T")[0];
-    const rangeStart = new Date(Date.UTC(cutoff.getFullYear(), cutoff.getMonth(), 1));
-    return {
-      filteredSnapshots: snapshots.filter((s) => s.date >= rangeStartIso),
-      rangeStart,
-      rangeEnd,
-      rangeStartIso,
-    };
+    return resolveAnalysisRange(snapshots, selected.months);
   }, [snapshots, range]);
 
   const buckets = useMemo(() => {
