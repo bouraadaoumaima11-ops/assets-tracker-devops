@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 import { AccountDetail } from "@/components/accounts/account-detail";
 import { AccountsNavPanel } from "@/components/accounts/accounts-nav-panel";
-import { getAccountDetail, getAccountPriceMap } from "@/lib/services/account-service";
+import {
+  getAccountDetail,
+  getAccountPriceMap,
+  type AccountPriceMap,
+} from "@/lib/services/account-service";
 import { fetchUserAccountsWithHoldings } from "@/lib/services/net-worth-service";
 import { getSession } from "@/lib/auth-session";
 import { getAllExchangeRates, resolveRate } from "@/lib/services/exchange-rate-service";
@@ -36,7 +40,7 @@ async function AccountDetailContent({ params }: { params: Promise<{ id: string }
   const allAccountsP = sessionP.then((s) =>
     s?.user?.id ? fetchUserAccountsWithHoldings(s.user.id) : [],
   );
-  const priceMapP = detailP.then((d) =>
+  const priceMapP: Promise<AccountPriceMap> = detailP.then((d) =>
     d ? getAccountPriceMap(d.holdings.map((h) => h.symbol)) : {},
   );
 
@@ -59,11 +63,11 @@ async function AccountDetailContent({ params }: { params: Promise<{ id: string }
   const warnedPairs = new Set<string>();
 
   for (const holding of serialized.holdings) {
-    const hc = holding.currency || "USD";
-    if (hc === serialized.currency) continue;
-    const key = `${hc}_${serialized.currency}`;
+    const quoteCurrency = priceMap[holding.symbol]?.currency || holding.currency || "USD";
+    if (quoteCurrency === serialized.currency) continue;
+    const key = `${quoteCurrency}_${serialized.currency}`;
     if (ratesMap[key] !== undefined) continue;
-    const rate = resolveRate(allRatesMap, hc, serialized.currency);
+    const rate = resolveRate(allRatesMap, quoteCurrency, serialized.currency);
     if (rate !== undefined) {
       ratesMap[key] = rate;
       continue;
@@ -71,7 +75,7 @@ async function AccountDetailContent({ params }: { params: Promise<{ id: string }
     ratesMap[key] = 1;
     if (!warnedPairs.has(key)) {
       warnedPairs.add(key);
-      log.warn("rates.unresolved", { from: hc, to: serialized.currency });
+      log.warn("rates.unresolved", { from: quoteCurrency, to: serialized.currency });
     }
   }
 
