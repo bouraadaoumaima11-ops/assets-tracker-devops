@@ -191,6 +191,7 @@ export async function materializeDueRecurringTransactions(
         });
         if (reservation.count === 0) return 0;
 
+        const materializedAt = new Date();
         const res = await tx.cashTransaction.createMany({
           data: occurrences.map((d) => ({
             accountId: rule.accountId,
@@ -199,6 +200,8 @@ export async function materializeDueRecurringTransactions(
             note: rule.note,
             recurringId: rule.id,
             occurrenceDate: d,
+            materializedAt,
+            materializedAtEstimated: false,
           })),
           skipDuplicates: true,
         });

@@ -444,6 +444,15 @@ export const POST = withAuth(async (request, _ctx, userId) => {
                 // createdAt only when occurrenceDate is null.
                 occurrenceDate: t.occurrenceDate ?? null,
                 recurringId: t.recurringId ? (recurringCashIdMap.get(t.recurringId) ?? null) : null,
+                // v1.4+ backups preserve durable provenance directly. For an
+                // older backup, a surviving recurringId proves generation but
+                // its exported createdAt is only an estimated posting bound.
+                materializedAt:
+                  t.materializedAt ?? (t.recurringId && t.createdAt ? t.createdAt : null),
+                materializedAtEstimated:
+                  t.materializedAt != null
+                    ? t.materializedAtEstimated
+                    : Boolean(t.recurringId && t.createdAt),
               })),
             });
           }

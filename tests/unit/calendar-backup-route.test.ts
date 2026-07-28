@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => {
   const makeTx = () => ({
     account: { deleteMany: vi.fn(), create: vi.fn(async () => ({ id: "new_account_1" })) },
+    cashTransaction: { createMany: vi.fn() },
+    recurringCashTransaction: { create: vi.fn(async () => ({ id: "new_cash_rule_1" })) },
+    recurringInvestment: { create: vi.fn() },
     netWorthSnapshot: { deleteMany: vi.fn(), createMany: vi.fn() },
     goal: { deleteMany: vi.fn(), createMany: vi.fn() },
     stockWatchItem: { deleteMany: vi.fn(), createMany: vi.fn() },
@@ -171,6 +174,90 @@ describe("Calendar whole-app backup", () => {
     expect(response.status).toBe(200);
     expect(h.tx.calendarEntry.deleteMany).toHaveBeenCalledWith({ where: { userId: "user_1" } });
     expect(h.tx.calendarEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("preserves durable recurring cash provenance during backup import", async () => {
+    const response = await importBackup({
+      version: "1.4",
+      accounts: [
+        {
+          name: "Brokerage",
+          type: "ASSET",
+          category: "BROKERAGE",
+          currency: "USD",
+          cashBalance: 100,
+          cashTransactions: [
+            {
+              type: "DEPOSIT",
+              amount: 100,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              occurrenceDate: "2026-01-01T00:00:00.000Z",
+              materializedAt: "2025-12-31T21:30:00.000Z",
+              materializedAtEstimated: false,
+              recurringId: null,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          accountId: "new_account_1",
+          materializedAt: "2025-12-31T21:30:00.000Z",
+          materializedAtEstimated: false,
+          recurringId: null,
+        }),
+      ],
+    });
+  });
+
+  it("recovers estimated provenance when importing an older linked recurring row", async () => {
+    const response = await importBackup({
+      version: "1.4",
+      accounts: [
+        {
+          name: "Brokerage",
+          type: "ASSET",
+          category: "BROKERAGE",
+          currency: "USD",
+          cashBalance: 100,
+          recurringCashTransactions: [
+            {
+              id: "old_cash_rule_1",
+              type: "DEPOSIT",
+              amount: 100,
+              frequency: "MONTHLY",
+              startDate: "2026-01-01T00:00:00.000Z",
+              nextRunDate: "2026-02-01T00:00:00.000Z",
+              isActive: true,
+            },
+          ],
+          cashTransactions: [
+            {
+              type: "DEPOSIT",
+              amount: 100,
+              createdAt: "2026-01-01T00:00:00.000Z",
+              occurrenceDate: "2026-01-01T00:00:00.000Z",
+              recurringId: "old_cash_rule_1",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          materializedAt: "2026-01-01T00:00:00.000Z",
+          materializedAtEstimated: true,
+          recurringId: "new_cash_rule_1",
+        }),
+      ],
+    });
   });
 
   it("preserves remapped mixed-currency snapshot breakdown entries for later FX revaluation", async () => {

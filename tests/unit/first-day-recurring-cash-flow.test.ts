@@ -7,6 +7,8 @@ interface CashRow {
   recurringId: string | null;
   occurrenceDate: Date | null;
   createdAt: Date;
+  materializedAt: Date | null;
+  materializedAtEstimated: boolean;
 }
 
 interface SnapshotRow {
@@ -71,6 +73,25 @@ function matchesCashWhere(row: CashRow, where: Record<string, unknown>): boolean
         return false;
       }
       continue;
+    }
+    if (field === "materializedAt") {
+      if (condition === null && row.materializedAt !== null) return false;
+      if (condition !== null) {
+        if ((condition as { not?: null }).not === null && row.materializedAt === null) {
+          return false;
+        }
+        if (
+          "gt" in (condition as object) &&
+          (row.materializedAt === null ||
+            row.materializedAt.getTime() <= ((condition as { gt: Date }).gt as Date).getTime())
+        ) {
+          return false;
+        }
+      }
+      continue;
+    }
+    if (field === "materializedAtEstimated" && row.materializedAtEstimated !== condition) {
+      return false;
     }
     if (field === "occurrenceDate") {
       if (condition === null) {
@@ -140,6 +161,12 @@ vi.mock("@/lib/prisma", () => {
             ...args.data.map((row) => ({
               ...row,
               createdAt: row.createdAt ?? new Date(),
+              materializedAt:
+                "materializedAt" in row && row.materializedAt instanceof Date
+                  ? row.materializedAt
+                  : null,
+              materializedAtEstimated:
+                "materializedAtEstimated" in row && row.materializedAtEstimated === true,
             })),
           );
           return { count: args.data.length };
@@ -228,6 +255,9 @@ describe("first-day recurring cash flow (#658)", () => {
     const businessDay = taiwanCalendarDay(new Date());
     expect(businessDay.toISOString()).toBe("2026-01-01T00:00:00.000Z");
     await materializeDueRecurringTransactions(businessDay);
+    // Deleting the rule sets the foreign key to null. Durable materialization
+    // provenance must still keep this generated row out of the baseline.
+    h.cashRows[0].recurringId = null;
 
     // Snapshotting happens after the balance-changing materialization.
     vi.setSystemTime(new Date("2025-12-31T21:30:01.000Z"));

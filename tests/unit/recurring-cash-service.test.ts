@@ -216,6 +216,8 @@ describe("materializeDueRecurringTransactions", () => {
   });
 
   it("posts due occurrences and increments balance by the signed total", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-14T21:30:00.000Z"));
     h.dueRules = [
       {
         id: "rule1",
@@ -231,16 +233,24 @@ describe("materializeDueRecurringTransactions", () => {
     ];
     const result = await materializeDueRecurringTransactions(d("2026-06-14"));
 
-    // 2026-06-01, 06-08 are <= 06-14 (06-15 is the next run).
-    expect(result).toEqual({ created: 2, rulesProcessed: 1 });
-    expect(h.createManyCalls[0].data).toHaveLength(2);
-    expect(h.createManyCalls[0].skipDuplicates).toBe(true);
-    // +100 * 2 inserted rows.
-    const inc = (h.accountUpdates[0].data as { cashBalance: { increment: unknown } }).cashBalance
-      .increment;
-    expect(Number(inc)).toBe(200);
-    expect(iso(h.ruleUpdates[0].data.nextRunDate as Date)).toBe("2026-06-15");
-    expect(h.ruleUpdates[0].data.isActive).toBe(true);
+    try {
+      // 2026-06-01, 06-08 are <= 06-14 (06-15 is the next run).
+      expect(result).toEqual({ created: 2, rulesProcessed: 1 });
+      expect(h.createManyCalls[0].data).toHaveLength(2);
+      expect(h.createManyCalls[0].skipDuplicates).toBe(true);
+      expect(h.createManyCalls[0].data[0]).toMatchObject({
+        materializedAt: new Date("2026-06-14T21:30:00.000Z"),
+        materializedAtEstimated: false,
+      });
+      // +100 * 2 inserted rows.
+      const inc = (h.accountUpdates[0].data as { cashBalance: { increment: unknown } }).cashBalance
+        .increment;
+      expect(Number(inc)).toBe(200);
+      expect(iso(h.ruleUpdates[0].data.nextRunDate as Date)).toBe("2026-06-15");
+      expect(h.ruleUpdates[0].data.isActive).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("negates the balance delta for withdrawals", async () => {
