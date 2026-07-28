@@ -186,6 +186,18 @@ describe("Calendar whole-app backup", () => {
           category: "BROKERAGE",
           currency: "USD",
           cashBalance: 100,
+          recurringCashTransactions: [
+            {
+              id: "old_cash_rule_1",
+              type: "DEPOSIT",
+              amount: 100,
+              frequency: "MONTHLY",
+              startDate: "2026-01-01T00:00:00.000Z",
+              nextRunDate: "2026-02-01T00:00:00.000Z",
+              isActive: true,
+              createdAt: "2026-01-02T00:00:00.000Z",
+            },
+          ],
           cashTransactions: [
             {
               type: "DEPOSIT",
@@ -194,7 +206,7 @@ describe("Calendar whole-app backup", () => {
               occurrenceDate: "2026-01-01T00:00:00.000Z",
               materializedAt: "2025-12-31T21:30:00.000Z",
               materializedAtEstimated: false,
-              recurringId: null,
+              recurringId: "old_cash_rule_1",
             },
           ],
         },
@@ -208,13 +220,13 @@ describe("Calendar whole-app backup", () => {
           accountId: "new_account_1",
           materializedAt: "2025-12-31T21:30:00.000Z",
           materializedAtEstimated: false,
-          recurringId: null,
+          recurringId: "new_cash_rule_1",
         }),
       ],
     });
   });
 
-  it("recovers estimated provenance when importing an older linked recurring row", async () => {
+  it("uses the linked rule creation bound for an older backfill imported after a snapshot", async () => {
     const response = await importBackup({
       version: "1.4",
       accounts: [
@@ -233,14 +245,71 @@ describe("Calendar whole-app backup", () => {
               startDate: "2026-01-01T00:00:00.000Z",
               nextRunDate: "2026-02-01T00:00:00.000Z",
               isActive: true,
+              createdAt: "2026-03-06T12:00:00.000Z",
             },
           ],
           cashTransactions: [
             {
               type: "DEPOSIT",
               amount: 100,
-              createdAt: "2026-01-01T00:00:00.000Z",
-              occurrenceDate: "2026-01-01T00:00:00.000Z",
+              createdAt: "2026-03-01T00:00:00.000Z",
+              occurrenceDate: "2026-03-01T00:00:00.000Z",
+              recurringId: "old_cash_rule_1",
+            },
+          ],
+        },
+      ],
+      snapshots: [
+        {
+          date: "2026-03-05T00:00:00.000Z",
+          totalAssets: 100,
+          totalLiabilities: 0,
+          netWorth: 100,
+          baseCurrency: "USD",
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          materializedAt: "2026-03-06T12:00:00.000Z",
+          materializedAtEstimated: true,
+          recurringId: "new_cash_rule_1",
+        }),
+      ],
+    });
+  });
+
+  it("keeps the transaction creation bound when it is later than the linked rule", async () => {
+    const response = await importBackup({
+      version: "1.4",
+      accounts: [
+        {
+          name: "Brokerage",
+          type: "ASSET",
+          category: "BROKERAGE",
+          currency: "USD",
+          cashBalance: 100,
+          recurringCashTransactions: [
+            {
+              id: "old_cash_rule_1",
+              type: "DEPOSIT",
+              amount: 100,
+              frequency: "MONTHLY",
+              startDate: "2026-01-01T00:00:00.000Z",
+              nextRunDate: "2026-02-01T00:00:00.000Z",
+              isActive: true,
+              createdAt: "2026-03-01T00:00:00.000Z",
+            },
+          ],
+          cashTransactions: [
+            {
+              type: "DEPOSIT",
+              amount: 100,
+              createdAt: "2026-03-07T00:00:00.000Z",
+              occurrenceDate: "2026-03-01T00:00:00.000Z",
               recurringId: "old_cash_rule_1",
             },
           ],
@@ -252,9 +321,44 @@ describe("Calendar whole-app backup", () => {
     expect(h.tx.cashTransaction.createMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
-          materializedAt: "2026-01-01T00:00:00.000Z",
+          materializedAt: "2026-03-07T00:00:00.000Z",
           materializedAtEstimated: true,
           recurringId: "new_cash_rule_1",
+        }),
+      ],
+    });
+  });
+
+  it("keeps the transaction creation bound when the linked rule is missing", async () => {
+    const response = await importBackup({
+      version: "1.4",
+      accounts: [
+        {
+          name: "Brokerage",
+          type: "ASSET",
+          category: "BROKERAGE",
+          currency: "USD",
+          cashBalance: 100,
+          cashTransactions: [
+            {
+              type: "DEPOSIT",
+              amount: 100,
+              createdAt: "2026-03-07T00:00:00.000Z",
+              occurrenceDate: "2026-03-01T00:00:00.000Z",
+              recurringId: "missing_cash_rule",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          materializedAt: "2026-03-07T00:00:00.000Z",
+          materializedAtEstimated: true,
+          recurringId: null,
         }),
       ],
     });
