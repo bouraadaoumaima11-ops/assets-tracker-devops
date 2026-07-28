@@ -8,15 +8,14 @@ import { log } from "@/lib/logger";
  * Unauthenticated by design (health checks must work without a session) but
  * rate-limited per IP so it can't be abused as a free DB-ping endpoint. Returns
  * only non-sensitive status: DB connectivity, the latest snapshot timestamp +
- * age, the latest successful cron run timestamp + age, and the response
+ * age, the latest cron attempt and successful run timestamps, and the response
  * timestamp. No user data is exposed.
  *
  * Four independent signals are reported and rolled up into `status`:
  *   - db       → DB reachability ("ok" / "error").
- *   - cron     → freshness of the latest *successful* CronRun (name "snapshot").
- *                This is the E18 pull-based alarm: it goes stale when no cron has
- *                succeeded within the freshness window — even if old snapshot
- *                rows still exist. Free-plan compatible (no extra cron needed).
+ *   - cron     → outcome and freshness of the latest CronRun (name "snapshot").
+ *                This is the E18 pull-based alarm: a failed latest attempt is
+ *                degraded even when an older run succeeded recently.
  *   - snapshot → freshness of the most recent NetWorthSnapshot (the E17 signal).
  *   - priceCache → freshness of the newest cached market quote. Only aggregate
  *                   freshness metadata is exposed; no symbols, prices, or user
@@ -25,8 +24,8 @@ import { log } from "@/lib/logger";
  *
  * Overall `status` is the worst of the four:
  *   - "unhealthy" → DB unreachable. HTTP 503.
- *   - "degraded"  → DB reachable but the cron OR the latest snapshot is
- *                   stale/absent (> 36 h). HTTP 503.
+ *   - "degraded"  → DB reachable but the latest cron failed, or freshness data
+ *                   is stale/absent (> 36 h). HTTP 503.
  *   - "ok"        → all applicable signals healthy. HTTP 200.
  *
  * The 36 h freshness window is shared across snapshot, cron, and prices so
@@ -46,6 +45,9 @@ export async function GET(request: Request) {
   let dbOk = false;
   let latestSnapshotAt: string | null = null;
   let snapshotAgeMs: number | null = null;
+  let latestCronAt: string | null = null;
+  let latestCronAgeMs: number | null = null;
+  let latestCronOk: boolean | null = null;
   let lastCronSuccessAt: string | null = null;
   let cronAgeMs: number | null = null;
   let latestPriceAt: string | null = null;
@@ -54,14 +56,19 @@ export async function GET(request: Request) {
 
   try {
     // Lightweight liveness check + most-recent snapshot freshness + latest
-    // successful cron run, and newest PriceCache timestamp in one parallel
+    // cron attempt/success, and newest PriceCache timestamp in one parallel
     // round. PriceCache.updatedAt has its own index, so the aggregate stays a
     // lightweight freshness probe rather than loading any market data.
-    const [, latestSnapshot, latestCron, latestPrice] = await Promise.all([
+    const [, latestSnapshot, latestCron, latestCronSuccess, latestPrice] = await Promise.all([
       prisma.$queryRaw`SELECT 1`,
       prisma.netWorthSnapshot.findFirst({
         orderBy: { createdAt: "desc" },
         select: { createdAt: true },
+      }),
+      prisma.cronRun.findFirst({
+        where: { name: SNAPSHOT_CRON_NAME },
+        orderBy: { startedAt: "desc" },
+        select: { startedAt: true, ok: true },
       }),
       prisma.cronRun.findFirst({
         where: { name: SNAPSHOT_CRON_NAME, ok: true },
@@ -77,8 +84,13 @@ export async function GET(request: Request) {
       snapshotAgeMs = now - latestSnapshot.createdAt.getTime();
     }
     if (latestCron) {
-      lastCronSuccessAt = latestCron.startedAt.toISOString();
-      cronAgeMs = now - latestCron.startedAt.getTime();
+      latestCronAt = latestCron.startedAt.toISOString();
+      latestCronOk = latestCron.ok;
+      latestCronAgeMs = now - latestCron.startedAt.getTime();
+    }
+    if (latestCronSuccess) {
+      lastCronSuccessAt = latestCronSuccess.startedAt.toISOString();
+      cronAgeMs = now - latestCronSuccess.startedAt.getTime();
     }
     if (latestPrice._max.updatedAt) {
       latestPriceAt = latestPrice._max.updatedAt.toISOString();
@@ -105,7 +117,8 @@ export async function GET(request: Request) {
   }
 
   const snapshotFresh = snapshotAgeMs !== null && snapshotAgeMs <= FRESHNESS_MAX_AGE_MS;
-  const cronFresh = cronAgeMs !== null && cronAgeMs <= FRESHNESS_MAX_AGE_MS;
+  const cronFresh =
+    latestCronOk === true && latestCronAgeMs !== null && latestCronAgeMs <= FRESHNESS_MAX_AGE_MS;
   const priceFresh =
     priceAgeMs === null ? !emptyCacheHasPriceableAssets : priceAgeMs <= FRESHNESS_MAX_AGE_MS;
 
@@ -124,16 +137,19 @@ export async function GET(request: Request) {
   // Overall status is the worst of {db, cron, snapshot, priceCache}.
   const status = !dbOk ? "unhealthy" : snapshotFresh && cronFresh && priceFresh ? "ok" : "degraded";
   const httpStatus = status === "ok" ? 200 : 503;
+  const cron = !dbOk ? "unknown" : latestCronOk === false ? "error" : cronFresh ? "ok" : "stale";
 
   return Response.json(
     {
       status,
       db: dbOk ? "ok" : "error",
-      cron: !dbOk ? "unknown" : cronFresh ? "ok" : "stale",
+      cron,
       snapshot: !dbOk ? "unknown" : snapshotFresh ? "ok" : "stale",
       priceCache,
       latestSnapshotAt,
       snapshotAgeMs,
+      latestCronAt,
+      latestCronAgeMs,
       lastCronSuccessAt,
       cronAgeMs,
       latestPriceAt,
