@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
   snapshotOpts: [] as unknown[],
   rateRefreshes: [] as string[],
   rateRefreshFailures: new Set<string>(),
+  snapshotTimeJumpUser: null as string | null,
+  snapshotTimeJumpMs: 0,
 }));
 
 vi.mock("@/lib/env", () => ({
@@ -70,6 +72,9 @@ vi.mock("@/lib/services/snapshot-service", () => ({
   createSnapshot: vi.fn(async (userId: string, _baseCurrency: string, opts?: unknown) => {
     h.events.push(`snapshot:${userId}`);
     h.snapshotOpts.push(opts);
+    if (h.snapshotTimeJumpUser === userId) {
+      vi.setSystemTime(new Date(Date.now() + h.snapshotTimeJumpMs));
+    }
     if (h.snapshotFailures.has(userId)) throw new Error(`snapshot failed for ${userId}`);
     return { id: `snapshot-${userId}` };
   }),
@@ -98,7 +103,13 @@ vi.mock("@/lib/prisma", () => {
       findMany: vi.fn(async () => []),
     },
     user: {
-      findMany: vi.fn(async () => h.users),
+      findMany: vi.fn(async (args?: { take?: number; cursor?: { id: string }; skip?: number }) => {
+        const cursorIndex = args?.cursor
+          ? h.users.findIndex((user) => user.id === args.cursor?.id)
+          : -1;
+        const start = cursorIndex < 0 ? 0 : cursorIndex + (args?.skip ?? 0);
+        return h.users.slice(start, args?.take ? start + args.take : undefined);
+      }),
     },
     $transaction: vi.fn(async (work: unknown) => {
       if (Array.isArray(work)) return Promise.all(work);
@@ -121,6 +132,8 @@ describe("snapshot cron route", () => {
     h.snapshotOpts = [];
     h.rateRefreshes = [];
     h.rateRefreshFailures = new Set();
+    h.snapshotTimeJumpUser = null;
+    h.snapshotTimeJumpMs = 0;
   });
 
   it("invalidates net worth before snapshot creation when options expire", async () => {
@@ -331,6 +344,80 @@ describe("snapshot cron route", () => {
       expect(h.inputLoads).toHaveLength(1);
       expect(h.inputLoads.flat()).toEqual(h.users.map((u) => u.id));
       expect(h.events.filter((e) => e.startsWith("snapshot:"))).toHaveLength(25);
+    });
+
+    it("cursor-pages users instead of loading the whole table before chunking", async () => {
+      h.users = manyUsers(201);
+      const { GET } = await import("@/app/api/cron/snapshot/route");
+      const { prisma } = await import("@/lib/prisma");
+
+      const response = await GET(
+        new Request("http://unit.test/api/cron/snapshot", {
+          headers: { authorization: "Bearer test-secret" },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(h.inputLoads.map((ids) => ids.length)).toEqual([200, 1]);
+      expect(vi.mocked(prisma.user.findMany)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(prisma.user.findMany)).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          take: 200,
+          orderBy: { id: "asc" },
+        }),
+      );
+      expect(vi.mocked(prisma.user.findMany)).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          take: 200,
+          orderBy: { id: "asc" },
+          cursor: { id: "user199" },
+          skip: 1,
+        }),
+      );
+    });
+
+    it("stops scheduling snapshot waves before the platform deadline and records partial failure", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-05T21:30:00.000Z"));
+      try {
+        h.users = manyUsers(25);
+        // Simulate upstream + two write waves consuming the safe cron budget.
+        // The third wave must never be scheduled, leaving time to persist the
+        // CronRun failure and return before Vercel's 60-second hard kill.
+        h.snapshotTimeJumpUser = "user19";
+        h.snapshotTimeJumpMs = 51_000;
+        const { GET } = await import("@/app/api/cron/snapshot/route");
+        const { prisma } = await import("@/lib/prisma");
+        const { log } = await import("@/lib/logger");
+        const { finishSnapshotCronCheckIn } = await import("@/lib/sentry-cron");
+
+        const response = await GET(
+          new Request("http://unit.test/api/cron/snapshot", {
+            headers: { authorization: "Bearer test-secret" },
+          }),
+        );
+
+        expect(response.status).toBe(503);
+        expect(h.events.filter((event) => event.startsWith("snapshot:"))).toHaveLength(20);
+        expect(h.events).toContain("revalidate:snapshots");
+        expect(h.events).toContain("revalidate:history:user0");
+        expect(h.events).not.toContain("snapshot:user20");
+        expect(prisma.cronRun.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              ok: false,
+              error: expect.stringMatching(/budget.*20.*25/i),
+            }),
+          }),
+        );
+        expect(prisma.cronRun.update).toHaveBeenCalledTimes(1);
+        expect(log.error).not.toHaveBeenCalledWith("cron.snapshot.failed", expect.anything());
+        expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "error");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("keeps sweeping when one currency's rate refresh throws", async () => {
