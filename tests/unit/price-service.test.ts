@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // price-service imports server-only modules and external clients.
 // Stub them all so the unit suite needs no DB or network.
@@ -29,8 +29,12 @@ vi.mock("next/cache", () => ({
 
 const { prisma } = await import("@/lib/prisma");
 const { getYahooClient } = await import("@/lib/services/yahoo-client");
-const { refreshPricesForStockSymbols, refreshAllPrices, normalizeMinorCurrencyQuote } =
-  await import("@/lib/services/price-service");
+const {
+  fetchCryptoPrices,
+  refreshPricesForStockSymbols,
+  refreshAllPrices,
+  normalizeMinorCurrencyQuote,
+} = await import("@/lib/services/price-service");
 const { PRICE_REFRESH_TTL_MS } = await import("@/lib/refresh-policy");
 
 describe("normalizeMinorCurrencyQuote — minor-unit (pence/cents) normalization", () => {
@@ -178,6 +182,28 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(getYahooClient).toHaveBeenCalled();
     expect(cleanupCall).toBeDefined();
     expect(result.updated).toBe(0);
+  });
+
+  it("releases the claim when the Yahoo client fails to initialize", async () => {
+    const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
+
+    vi.mocked(prisma.priceCache.findMany).mockResolvedValueOnce([
+      { symbol: "AAPL", updatedAt: staleDate },
+    ] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([{ symbol: "AAPL" }]);
+    vi.mocked(getYahooClient).mockRejectedValueOnce(new Error("client initialization failed"));
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValueOnce(1);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    const cleanupCall = vi
+      .mocked(prisma.$executeRawUnsafe)
+      .mock.calls.find(
+        ([sql]) => typeof sql === "string" && /refreshingAt/i.test(sql) && /NULL/i.test(sql),
+      );
+    expect(cleanupCall).toBeDefined();
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([expect.stringContaining("client initialization failed")]);
   });
 
   it("releases only the unfetched claim on a partial fetch (one ticker missing)", async () => {
@@ -344,6 +370,10 @@ describe("fetchYahooQuotes — a rate limit is not amplified by the retry ladder
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   // Long timeouts so that on the pre-fix code these fail on the call-count
   // assertion rather than on the ~4 s of retry backoff they would sit through.
   it("does not retry a 429 reported through the error's numeric code", async () => {
@@ -378,6 +408,41 @@ describe("fetchYahooQuotes — a rate limit is not amplified by the retry ladder
     expect(result.updated).toBe(0);
   }, 20_000);
 
+  it("does not fan a rate-limited batch out into per-symbol requests", async () => {
+    stubAllSymbolsFetchable();
+    const symbols = Array.from({ length: 50 }, (_, i) => `SYM${i}`);
+    const quote = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error("edge fetch failed"), { code: 429 }));
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const result = await refreshPricesForStockSymbols(symbols);
+
+    expect(quote).toHaveBeenCalledTimes(1);
+    expect(result.updated).toBe(0);
+  });
+
+  it("does not start a retry after its backoff crosses the wall-clock budget", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    stubAllSymbolsFetchable();
+    const quote = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        vi.setSystemTime(new Date(Date.now() + 14_800));
+        return Promise.reject(new Error("Yahoo returned HTTP 503"));
+      })
+      .mockResolvedValueOnce([quoteFor("AAPL")]);
+    vi.mocked(getYahooClient).mockResolvedValue({ quote } as never);
+
+    const pending = refreshPricesForStockSymbols(["AAPL"]);
+    await vi.advanceTimersByTimeAsync(500);
+    const result = await pending;
+
+    expect(quote).toHaveBeenCalledTimes(1);
+    expect(result.updated).toBe(0);
+  });
+
   it("still retries a genuine 5xx", async () => {
     stubAllSymbolsFetchable();
     const quote = vi
@@ -392,4 +457,92 @@ describe("fetchYahooQuotes — a rate limit is not amplified by the retry ladder
     expect(quote).toHaveBeenCalledTimes(2);
     expect(result.updated).toBe(1);
   }, 20_000);
+});
+
+function currencyCode(index: number): string {
+  return [2, 1, 0]
+    .map((power) => String.fromCharCode(65 + (Math.floor(index / 26 ** power) % 26)))
+    .join("");
+}
+
+function coinGeckoPayload(url: URL, price = 100): Record<string, Record<string, number>> {
+  const ids = url.searchParams.get("ids")?.split(",") ?? [];
+  const currencies = url.searchParams.get("vs_currencies")?.split(",") ?? [];
+  return Object.fromEntries(
+    ids.map((id) => [id, Object.fromEntries(currencies.map((currency) => [currency, price]))]),
+  );
+}
+
+describe("fetchCryptoPrices — bounded CoinGecko requests", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("bounds both ids and quote currencies while keeping at most two requests in flight", async () => {
+    const symbols = Array.from({ length: 55 }, (_, i) => `COIN${i}-${currencyCode(i)}`);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi.fn().mockResolvedValue([]),
+    } as never);
+
+    let inFlight = 0;
+    let peak = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      inFlight--;
+      const url = new URL(String(input));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => coinGeckoPayload(url),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchCryptoPrices(symbols);
+
+    expect(result.size).toBe(55);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(peak).toBeGreaterThanOrEqual(2);
+    for (const [input] of fetchMock.mock.calls) {
+      const url = new URL(String(input));
+      expect(url.searchParams.get("ids")?.split(",").length).toBeLessThanOrEqual(50);
+      expect(url.searchParams.get("vs_currencies")?.split(",").length).toBeLessThanOrEqual(50);
+    }
+  });
+
+  it("keeps healthy CoinGecko chunks when one chunk is rate-limited without retrying it", async () => {
+    const symbols = Array.from({ length: 120 }, (_, i) => `COIN${i}-USD`);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi.fn().mockResolvedValue([]),
+    } as never);
+
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const ids = url.searchParams.get("ids")?.split(",") ?? [];
+      if (ids.includes("coin50")) {
+        return { ok: false, status: 429, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => coinGeckoPayload(url),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchCryptoPrices(symbols);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.size).toBe(70);
+    expect(result.has("COIN0-USD")).toBe(true);
+    expect(result.has("COIN50-USD")).toBe(false);
+    expect(result.has("COIN119-USD")).toBe(true);
+  });
 });

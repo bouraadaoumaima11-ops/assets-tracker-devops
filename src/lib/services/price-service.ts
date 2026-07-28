@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client";
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
 import { log, withTiming } from "@/lib/logger";
+import { chunk } from "@/lib/batch";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [500, 1_500]; // 2 retries: 500 ms then 1.5 s
@@ -23,6 +24,7 @@ const YAHOO_FALLBACK_CONCURRENCY = 4;
 // CoinGecko's free tier rate-limits far more aggressively than Yahoo, so ids
 // are chunked mainly to bound the query string and are run only 2 at a time.
 const COINGECKO_CHUNK_SIZE = 50;
+const COINGECKO_CURRENCY_CHUNK_SIZE = 50;
 const COINGECKO_CONCURRENCY = 2;
 
 // Wall-clock budgets. The cron route has a 60 s maxDuration and price refresh is
@@ -60,15 +62,6 @@ function decimalChangedAtDbScale(current: unknown, next: number): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-// ponytail: `chunk` and `runPool` are deliberately local. PR #647 introduces
-// `src/lib/batch.ts` with equivalent `chunk`/`mapSettled` helpers; collapse
-// these into that module once it lands rather than keeping two copies.
-function chunk<T>(items: T[], size: number): T[][] {
-  const groups: T[][] = [];
-  for (let i = 0; i < items.length; i += size) groups.push(items.slice(i, i + size));
-  return groups;
 }
 
 /**
@@ -156,6 +149,7 @@ async function withRetry<T>(
       // timeouts and backoff on top of it.
       if (attempt < RETRY_DELAYS_MS.length && isRetryable(err) && !shouldStop()) {
         await sleep(RETRY_DELAYS_MS[attempt]);
+        if (shouldStop()) break;
       } else {
         break;
       }
@@ -269,6 +263,9 @@ async function fetchYahooQuotes(
               error: String(batchErr),
               symbolCount: group.length,
             });
+            // A rate-limited batch must not fan out into one request per symbol:
+            // that would amplify the exact upstream signal telling us to stop.
+            if (isRateLimited(batchErr)) return;
             // Isolate bad tickers for *this chunk only*. Falling back over the
             // whole symbol list is what made one failed request fan out to one
             // request per symbol across every user's holdings.
@@ -345,14 +342,22 @@ export async function fetchCryptoPrices(
     if (ids.length > 0) {
       const data: Record<string, Record<string, number>> = {};
       const outOfBudget = deadlineGuard(COINGECKO_BUDGET_MS);
-      // Chunked so the query string stays bounded regardless of how many
-      // distinct coins the instance holds. A chunk that fails no longer costs
-      // the run every other chunk's prices.
+      const requests = chunk(ids, COINGECKO_CHUNK_SIZE).flatMap((idGroup) =>
+        chunk(vsCurrencies, COINGECKO_CURRENCY_CHUNK_SIZE).map((currencyGroup) => ({
+          idGroup,
+          currencyGroup,
+        })),
+      );
+      // Chunk both query dimensions so neither a large coin universe nor a
+      // large quote-currency set can grow the URL without bound. A request that
+      // fails no longer costs the run every other chunk's prices.
       await runPool(
-        chunk(ids, COINGECKO_CHUNK_SIZE),
+        requests,
         COINGECKO_CONCURRENCY,
-        async (idGroup) => {
-          const url = `https://api.coingecko.com/api/v3/simple/price?ids=${idGroup.join(",")}&vs_currencies=${vsCurrencies.join(",")}`;
+        async ({ idGroup, currencyGroup }) => {
+          const url = new URL("https://api.coingecko.com/api/v3/simple/price");
+          url.searchParams.set("ids", idGroup.join(","));
+          url.searchParams.set("vs_currencies", currencyGroup.join(","));
           try {
             const part = await withTiming(
               "price.coingecko.fetch",
@@ -371,9 +376,11 @@ export async function fetchCryptoPrices(
                     clearTimeout(timeoutId);
                   }
                 }, outOfBudget),
-              { idCount: idGroup.length },
+              { idCount: idGroup.length, currencyCount: currencyGroup.length },
             );
-            Object.assign(data, part);
+            for (const [id, prices] of Object.entries(part)) {
+              data[id] = { ...data[id], ...prices };
+            }
           } catch (error) {
             log.error("price.coingecko.failed", { error: String(error) });
           }
@@ -602,10 +609,24 @@ async function refreshPricesForHoldings(
   let updated = 0;
   let changed = 0;
 
-  const [stockPrices, cryptoPrices] = await Promise.all([
+  const [stockResult, cryptoResult] = await Promise.allSettled([
     fetchStockPrices(stockSymbols),
     fetchCryptoPrices(cryptoSymbols),
   ]);
+  const stockPrices =
+    stockResult.status === "fulfilled"
+      ? stockResult.value
+      : new Map<string, { price: number; currency: string }>();
+  const cryptoPrices =
+    cryptoResult.status === "fulfilled"
+      ? cryptoResult.value
+      : new Map<string, { price: number; currency: string }>();
+  if (stockResult.status === "rejected") {
+    errors.push(`Stock price fetch failed: ${String(stockResult.reason)}`);
+  }
+  if (cryptoResult.status === "rejected") {
+    errors.push(`Crypto price fetch failed: ${String(cryptoResult.reason)}`);
+  }
 
   const allPrices = new Map([...stockPrices, ...cryptoPrices]);
 
@@ -618,7 +639,7 @@ async function refreshPricesForHoldings(
       updated: 0,
       changed: 0,
       skippedFresh,
-      errors: [],
+      errors,
       nextRefreshAt: null,
       retryAfterSeconds: null,
     };
