@@ -72,7 +72,6 @@ export async function GET(request: Request) {
         _max: { updatedAt: true },
       }),
     ]);
-    dbOk = true;
     if (latestSnapshot) {
       latestSnapshotAt = latestSnapshot.createdAt.toISOString();
       snapshotAgeMs = now - latestSnapshot.createdAt.getTime();
@@ -99,6 +98,8 @@ export async function GET(request: Request) {
         emptyCacheHasPriceableAssets = true;
       }
     }
+    // Set readiness only after every conditional DB read above has completed.
+    dbOk = true;
   } catch (error) {
     log.error("health.db_unreachable", { error: String(error) });
   }
