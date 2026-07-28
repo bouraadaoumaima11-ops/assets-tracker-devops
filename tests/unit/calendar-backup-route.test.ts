@@ -13,6 +13,7 @@ const h = vi.hoisted(() => {
   return {
     makeTx,
     tx: makeTx(),
+    priceRefreshResult: undefined as unknown,
   };
 });
 
@@ -54,7 +55,7 @@ vi.mock("@/lib/services/exchange-rate-service", () => ({
 }));
 
 vi.mock("@/lib/services/price-service", () => ({
-  refreshPricesForUser: vi.fn(async () => undefined),
+  refreshPricesForUser: vi.fn(async () => h.priceRefreshResult),
 }));
 
 const calendarFixture = {
@@ -121,6 +122,7 @@ async function importBackup(body: unknown) {
 describe("Calendar whole-app backup", () => {
   beforeEach(() => {
     h.tx = h.makeTx();
+    h.priceRefreshResult = undefined;
     vi.clearAllMocks();
   });
 
@@ -167,5 +169,19 @@ describe("Calendar whole-app backup", () => {
     expect(response.status).toBe(200);
     expect(h.tx.calendarEntry.deleteMany).toHaveBeenCalledWith({ where: { userId: "user_1" } });
     expect(h.tx.calendarEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it("logs a resolved total price-refresh failure after import warm-up", async () => {
+    h.priceRefreshResult = { outcome: "total_failure", errors: ["Yahoo Finance unavailable"] };
+    const { log } = await import("@/lib/logger");
+
+    const response = await importBackup({ version: "1.4", accounts: [] });
+    await Promise.resolve();
+
+    expect(response.status).toBe(200);
+    expect(log.error).toHaveBeenCalledWith(
+      "import.price_warm_failed",
+      expect.objectContaining({ outcome: "total_failure" }),
+    );
   });
 });

@@ -138,6 +138,14 @@ export async function GET(request: Request) {
       ratesUpdated,
       ratesChanged,
     });
+    // A total refresh failure means every snapshot below would be calculated
+    // from stale PriceCache rows. Abort before any snapshot write so neither the
+    // CronRun audit nor /api/health can mistake stale valuations for success.
+    if (priceResult.outcome === "total_failure") {
+      const details = priceResult.errors.join(" | ") || "no usable prices returned";
+      log.error("cron.prices.refresh_failed", { errors: priceResult.errors });
+      throw new Error(`Price refresh failed: ${details}`);
+    }
 
     // 1b. Materialize due recurring cash transactions (F6) before snapshots, so
     // the day's snapshot reflects the posted cash. This piggybacks on the daily

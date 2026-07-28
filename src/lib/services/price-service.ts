@@ -5,6 +5,7 @@ import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
 import { log, withTiming } from "@/lib/logger";
 import { chunk } from "@/lib/batch";
+import type { PriceRefreshOutcome } from "@/lib/price-refresh-contract";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [500, 1_500]; // 2 retries: 500 ms then 1.5 s
@@ -35,6 +36,8 @@ const YAHOO_BUDGET_MS = 15_000;
 const COINGECKO_BUDGET_MS = 8_000;
 
 export type RefreshPricesResult = {
+  /** Whether no price work was due, some or all due quotes persisted, or the refresh failed. */
+  outcome: PriceRefreshOutcome;
   updated: number;
   /** Persisted rows whose price/currency changed compared with the previous value. */
   changed: number;
@@ -215,6 +218,7 @@ export function normalizeMinorCurrencyQuote(
 
 async function fetchYahooQuotes(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
   const results = new Map<string, { price: number; currency: string }>();
   if (symbols.length === 0) return results;
@@ -259,6 +263,7 @@ async function fetchYahooQuotes(
           try {
             await fetchSymbols(group);
           } catch (batchErr) {
+            providerErrors?.push(`Yahoo Finance batch failed: ${String(batchErr)}`);
             log.error("price.yahoo.batch_failed", {
               error: String(batchErr),
               symbolCount: group.length,
@@ -280,6 +285,7 @@ async function fetchYahooQuotes(
                 try {
                   await fetchSymbols([symbol]);
                 } catch (err) {
+                  providerErrors?.push(`Yahoo Finance fallback failed: ${String(err)}`);
                   log.error("price.yahoo.symbol_failed", { symbol, error: String(err) });
                 }
               },
@@ -297,8 +303,9 @@ async function fetchYahooQuotes(
 
 export async function fetchStockPrices(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
-  return fetchYahooQuotes(symbols);
+  return fetchYahooQuotes(symbols, providerErrors);
 }
 
 // Strip currency suffix from crypto symbol (e.g. "BTC-USD" -> "BTC")
@@ -315,11 +322,12 @@ function extractQuoteCurrency(symbol: string): string {
 
 export async function fetchCryptoPrices(
   symbols: string[],
+  providerErrors?: string[],
 ): Promise<Map<string, { price: number; currency: string }>> {
   if (symbols.length === 0) return new Map();
 
   // Primary: Yahoo Finance (handles crypto pairs like BTC-USD)
-  const results = await fetchYahooQuotes(symbols);
+  const results = await fetchYahooQuotes(symbols, providerErrors);
 
   // Fallback: CoinGecko for any symbols not found via Yahoo Finance
   const missing = symbols.filter((s) => !results.has(s));
@@ -382,6 +390,7 @@ export async function fetchCryptoPrices(
               data[id] = { ...data[id], ...prices };
             }
           } catch (error) {
+            providerErrors?.push(`CoinGecko fetch failed: ${String(error)}`);
             log.error("price.coingecko.failed", { error: String(error) });
           }
         },
@@ -463,6 +472,7 @@ export async function refreshPricesForStockSymbols(
   const uniqueSymbols = [...new Set(symbols.map((symbol) => symbol.toUpperCase()))];
   if (uniqueSymbols.length === 0) {
     return {
+      outcome: "no_due_symbols",
       updated: 0,
       changed: 0,
       skippedFresh: 0,
@@ -496,6 +506,7 @@ async function refreshPricesForHoldings(
 ): Promise<RefreshPricesResult> {
   if (holdings.length === 0) {
     return {
+      outcome: "no_due_symbols",
       updated: 0,
       changed: 0,
       skippedFresh: 0,
@@ -543,6 +554,7 @@ async function refreshPricesForHoldings(
         ? new Date(earliestFreshUpdatedAt.getTime() + PRICE_REFRESH_TTL_MS)
         : null;
       return {
+        outcome: "no_due_symbols",
         updated: 0,
         changed: 0,
         skippedFresh,
@@ -585,6 +597,7 @@ async function refreshPricesForHoldings(
       // All existing stale symbols are being refreshed by another instance.
       // Tell the client when the claim lock expires so it knows when to retry.
       return {
+        outcome: "deferred",
         updated: 0,
         changed: 0,
         skippedFresh,
@@ -604,14 +617,31 @@ async function refreshPricesForHoldings(
     .map((h) => h.symbol);
 
   const cryptoSymbols = holdings.filter((h) => h.assetType === "CRYPTO").map((h) => h.symbol);
+  const supportedDueSymbols = new Set([...stockSymbols, ...cryptoSymbols]);
+
+  // OTHER holdings intentionally have no market-data provider. They are not a
+  // failed refresh target; release any stale-row claim and preserve the normal
+  // no-work success semantics.
+  if (supportedDueSymbols.size === 0) {
+    await releaseClaims(claimedSymbols);
+    return {
+      outcome: "no_due_symbols",
+      updated: 0,
+      changed: 0,
+      skippedFresh,
+      errors: [],
+      nextRefreshAt: null,
+      retryAfterSeconds: null,
+    };
+  }
 
   const errors: string[] = [];
   let updated = 0;
   let changed = 0;
 
   const [stockResult, cryptoResult] = await Promise.allSettled([
-    fetchStockPrices(stockSymbols),
-    fetchCryptoPrices(cryptoSymbols),
+    fetchStockPrices(stockSymbols, errors),
+    fetchCryptoPrices(cryptoSymbols, errors),
   ]);
   const stockPrices =
     stockResult.status === "fulfilled"
@@ -630,12 +660,16 @@ async function refreshPricesForHoldings(
 
   const allPrices = new Map([...stockPrices, ...cryptoPrices]);
 
-  const entries = [...allPrices];
+  const entries = [...allPrices].filter(([symbol]) => supportedDueSymbols.has(symbol));
   if (entries.length === 0) {
     // No prices came back (all fetches failed). Release claims so the next
     // request can retry rather than waiting for the 30s dead-instance TTL.
     await releaseClaims(claimedSymbols);
+    if (errors.length === 0) {
+      errors.push(`No usable prices returned for ${supportedDueSymbols.size} due symbols`);
+    }
     return {
+      outcome: "total_failure",
       updated: 0,
       changed: 0,
       skippedFresh,
@@ -645,6 +679,7 @@ async function refreshPricesForHoldings(
     };
   }
 
+  let bulkUpsertFailed = false;
   try {
     const currentRows = await prisma.priceCache.findMany({
       where: { symbol: { in: entries.map(([symbol]) => symbol) } },
@@ -678,18 +713,42 @@ async function refreshPricesForHoldings(
     );
     updated = entries.length;
     changed = pendingChanged;
-    if (changed > 0) revalidateTag("prices", "max");
+  } catch (error) {
+    bulkUpsertFailed = true;
+    errors.push(`Bulk upsert failed: ${String(error)}`);
+    // Release claims so the next request can retry immediately.
+    await releaseClaims(claimedSymbols);
+  }
+
+  if (!bulkUpsertFailed) {
+    // Cache invalidation happens after the write boundary: a cache-provider
+    // failure cannot turn already-persisted prices into a total refresh failure.
+    if (changed > 0) {
+      try {
+        revalidateTag("prices", "max");
+      } catch (error) {
+        log.error("price.refresh.revalidate_failed", { error: String(error) });
+      }
+    }
 
     // Partial fetch: symbols we claimed but got no price for (bad/transient
     // ticker) keep their refreshingAt set by the upsert (it only clears rows it
     // touched). Release them so a retry isn't blocked for the full 30s TTL.
     const fetchedSet = new Set(entries.map(([symbol]) => symbol));
     await releaseClaims(claimedSymbols.filter((symbol) => !fetchedSet.has(symbol)));
-  } catch (error) {
-    errors.push(`Bulk upsert failed: ${String(error)}`);
-    // Release claims so the next request can retry immediately.
-    await releaseClaims(claimedSymbols);
   }
 
-  return { updated, changed, skippedFresh, errors, nextRefreshAt: null, retryAfterSeconds: null };
+  return {
+    outcome: bulkUpsertFailed
+      ? "total_failure"
+      : entries.length < supportedDueSymbols.size
+        ? "partial_success"
+        : "success",
+    updated,
+    changed,
+    skippedFresh,
+    errors,
+    nextRefreshAt: null,
+    retryAfterSeconds: null,
+  };
 }

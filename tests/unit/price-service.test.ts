@@ -130,6 +130,40 @@ describe("refreshAllPrices — cron-wide symbol collection", () => {
     expect(fetched).toContain("TSLA");
     expect(fetched.filter((symbol) => symbol === "AAPL")).toHaveLength(1);
   });
+
+  it("treats unpriceable holdings as no due symbols", async () => {
+    vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([
+      { symbol: "PRIVATE-LOAN", assetType: "OTHER" },
+    ] as never);
+    vi.mocked(prisma.stockWatchItem.findMany).mockResolvedValueOnce([] as never);
+
+    const result = await refreshAllPrices();
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
+    expect(getYahooClient).not.toHaveBeenCalled();
+  });
+
+  it("reports success when supported due symbols refresh alongside unsupported or duplicate holdings", async () => {
+    vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([
+      { symbol: "AAPL", assetType: "STOCK" },
+      { symbol: "AAPL", assetType: "STOCK" },
+      { symbol: "PRIVATE-LOAN", assetType: "OTHER" },
+    ] as never);
+    vi.mocked(prisma.stockWatchItem.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.priceCache.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValueOnce(1 as never);
+
+    const result = await refreshAllPrices();
+
+    expect(result.updated).toBe(1);
+    expect(result.outcome).toBe("success");
+  });
 });
 
 describe("refreshPricesForStockSymbols — claim deduplication", () => {
@@ -153,6 +187,26 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(result.updated).toBe(0);
     expect(result.errors).toHaveLength(0);
     expect(getYahooClient).not.toHaveBeenCalled();
+  });
+
+  it("reports no_due_symbols when every requested symbol is still fresh", async () => {
+    vi.mocked(prisma.priceCache.findMany).mockResolvedValueOnce([
+      { symbol: "AAPL", updatedAt: new Date() },
+    ] as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(getYahooClient).not.toHaveBeenCalled();
+  });
+
+  it("reports no_due_symbols when there are no requested symbols", async () => {
+    const result = await refreshPricesForStockSymbols([]);
+
+    expect(result.outcome).toBe("no_due_symbols");
+    expect(result.updated).toBe(0);
   });
 
   it("releases the claim when Yahoo returns no prices (fetch failure)", async () => {
@@ -182,6 +236,10 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(getYahooClient).toHaveBeenCalled();
     expect(cleanupCall).toBeDefined();
     expect(result.updated).toBe(0);
+    expect(result.outcome).toBe("total_failure");
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("Yahoo Finance batch failed")]),
+    );
   });
 
   it("releases the claim when the Yahoo client fails to initialize", async () => {
@@ -204,6 +262,56 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     expect(cleanupCall).toBeDefined();
     expect(result.updated).toBe(0);
     expect(result.errors).toEqual([expect.stringContaining("client initialization failed")]);
+  });
+
+  it("returns total_failure when the bulk price upsert fails", async () => {
+    const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
+    vi.mocked(prisma.priceCache.findMany)
+      .mockResolvedValueOnce([{ symbol: "AAPL", updatedAt: staleDate }] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([{ symbol: "AAPL" }]);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe)
+      .mockRejectedValueOnce(new Error("database write unavailable"))
+      .mockResolvedValueOnce(1 as never);
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result.outcome).toBe("total_failure");
+    expect(result.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("Bulk upsert failed")]),
+    );
+  });
+
+  it("keeps a persisted refresh successful when cache revalidation throws", async () => {
+    const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
+    vi.mocked(prisma.priceCache.findMany)
+      .mockResolvedValueOnce([{ symbol: "AAPL", updatedAt: staleDate }] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([{ symbol: "AAPL" }]);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValueOnce(1 as never);
+    const { revalidateTag } = await import("next/cache");
+    const { log } = await import("@/lib/logger");
+    vi.mocked(revalidateTag).mockImplementationOnce(() => {
+      throw new Error("cache unavailable");
+    });
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result).toMatchObject({ outcome: "success", updated: 1, changed: 1 });
+    expect(log.error).toHaveBeenCalledWith(
+      "price.refresh.revalidate_failed",
+      expect.objectContaining({ error: expect.stringContaining("cache unavailable") }),
+    );
   });
 
   it("releases only the unfetched claim on a partial fetch (one ticker missing)", async () => {
@@ -234,6 +342,7 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     const result = await refreshPricesForStockSymbols(["AAPL", "MSFT"]);
 
     expect(result.updated).toBe(1);
+    expect(result.outcome).toBe("partial_success");
 
     // The release call must target MSFT only, never AAPL (whose claim the
     // upsert already cleared).

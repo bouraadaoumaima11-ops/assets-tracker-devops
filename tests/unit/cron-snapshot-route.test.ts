@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   snapshotOpts: [] as unknown[],
   rateRefreshes: [] as string[],
   rateRefreshFailures: new Set<string>(),
+  priceRefreshResult: { updated: 0, changed: 0, outcome: "success", errors: [] as string[] },
   snapshotTimeJumpUser: null as string | null,
   snapshotTimeJumpMs: 0,
 }));
@@ -57,7 +58,7 @@ vi.mock("@/lib/services/net-worth-service", () => ({
 }));
 
 vi.mock("@/lib/services/price-service", () => ({
-  refreshAllPrices: vi.fn(async () => ({ updated: 0, changed: 0 })),
+  refreshAllPrices: vi.fn(async () => h.priceRefreshResult),
 }));
 
 vi.mock("@/lib/services/recurring-cash-service", () => ({
@@ -132,6 +133,7 @@ describe("snapshot cron route", () => {
     h.snapshotOpts = [];
     h.rateRefreshes = [];
     h.rateRefreshFailures = new Set();
+    h.priceRefreshResult = { updated: 0, changed: 0, outcome: "success", errors: [] };
     h.snapshotTimeJumpUser = null;
     h.snapshotTimeJumpMs = 0;
   });
@@ -265,6 +267,36 @@ describe("snapshot cron route", () => {
           error: expect.stringContaining("user1"),
         }),
       }),
+    );
+    expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "error");
+  });
+
+  it("fails the audit and skips stale-price snapshots when every due price fetch fails", async () => {
+    h.priceRefreshResult = {
+      updated: 0,
+      changed: 0,
+      outcome: "total_failure",
+      errors: ["Yahoo Finance batch failed: Error: upstream unavailable"],
+    };
+    const { GET } = await import("@/app/api/cron/snapshot/route");
+    const { prisma } = await import("@/lib/prisma");
+    const { log } = await import("@/lib/logger");
+    const { finishSnapshotCronCheckIn } = await import("@/lib/sentry-cron");
+
+    const response = await GET(
+      new Request("http://unit.test/api/cron/snapshot", {
+        headers: { authorization: "Bearer test-secret" },
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    expect(h.events.filter((event) => event.startsWith("snapshot:"))).toEqual([]);
+    expect(log.error).toHaveBeenCalledWith(
+      "cron.prices.refresh_failed",
+      expect.objectContaining({ errors: h.priceRefreshResult.errors }),
+    );
+    expect(prisma.cronRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ok: false }) }),
     );
     expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "error");
   });

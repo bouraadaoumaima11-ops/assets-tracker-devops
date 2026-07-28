@@ -586,9 +586,16 @@ export const POST = withAuth(async (request, _ctx, userId) => {
     // Imported holdings may reference symbols with no PriceCache row yet —
     // without this they render unpriced until the next manual refresh / cron.
     after(() =>
-      refreshPricesForUser(userId).catch((error) =>
-        log.error("import.price_warm_failed", { error: String(error) }),
-      ),
+      refreshPricesForUser(userId)
+        .then((result) => {
+          if (result?.outcome === "total_failure") {
+            log.error("import.price_warm_failed", {
+              outcome: result.outcome,
+              errors: result.errors,
+            });
+          }
+        })
+        .catch((error) => log.error("import.price_warm_failed", { error: String(error) })),
     );
 
     const response = ok({ ok: true });

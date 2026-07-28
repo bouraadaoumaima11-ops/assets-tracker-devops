@@ -82,6 +82,8 @@ export const POST = withAuth(async (request, _ctx, userId) => {
 
   return ok({
     prices: {
+      outcome: priceResult.outcome,
+      fetchFailed: priceResult.outcome === "total_failure",
       updated: priceResult.updated,
       changed: priceResult.changed,
       skippedFresh: priceResult.skippedFresh,
