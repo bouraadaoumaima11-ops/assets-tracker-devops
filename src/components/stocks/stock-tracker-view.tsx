@@ -54,6 +54,7 @@ import { usePrivacyMode } from "@/components/layout/privacy-mode-context";
 import { hapticTick } from "@/lib/haptics";
 import { formatAmountInput } from "@/lib/amount-input";
 import { CLIENT_REFRESH_COOLDOWN_MS } from "@/lib/refresh-policy";
+import { stockManualRefreshFeedback, type PriceRefreshPayload } from "@/lib/price-refresh-contract";
 import { cn, daysBetweenDates, localToday } from "@/lib/utils";
 import type { SerializedTrackedStock } from "@/lib/services/stock-watch-service";
 
@@ -775,15 +776,19 @@ export function StockTrackerView({ stocks }: { stocks: SerializedTrackedStock[] 
         return;
       }
       if (!res.ok) throw new Error("refresh failed");
-      const { data }: { data: { updated: number; changed?: number; skippedFresh?: number } } =
-        await res.json();
+      const { data }: { data: PriceRefreshPayload } = await res.json();
       startCooldown(Math.ceil(CLIENT_REFRESH_COOLDOWN_MS / 1000));
-      if (data.updated === 0 && (data.skippedFresh ?? 0) > 0) {
+      const feedback = stockManualRefreshFeedback(data);
+      if (feedback === "error") {
+        toast.error(t("refreshFailed"));
+        return;
+      }
+      if (feedback === "fresh") {
         toast.info(t("alreadyFresh"));
         return;
       }
-      toast.success(t("refreshSuccess", { count: data.updated }));
-      if ((data.changed ?? data.updated) > 0) {
+      toast.success(t("refreshSuccess", { count: data.updated ?? 0 }));
+      if ((data.changed ?? data.updated ?? 0) > 0) {
         window.dispatchEvent(new CustomEvent("prices:refreshed"));
         startTransition(() => router.refresh());
       }

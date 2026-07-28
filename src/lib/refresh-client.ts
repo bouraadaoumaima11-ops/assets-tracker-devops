@@ -1,6 +1,7 @@
 "use client";
 
 import { CLIENT_REFRESH_COOLDOWN_MS } from "@/lib/refresh-policy";
+import { isTotalPriceRefreshFailure, type PriceRefreshOutcome } from "@/lib/price-refresh-contract";
 
 /**
  * Shared client-side entry point for the dashboard/settings "refresh market
@@ -47,6 +48,7 @@ type RefreshPayload = {
   skippedFresh?: number | boolean;
   retryAfterSeconds?: number | null;
   fetchFailed?: boolean;
+  outcome?: PriceRefreshOutcome;
 };
 
 export async function refreshMarketData(): Promise<RefreshOutcome> {
@@ -75,6 +77,7 @@ export async function refreshMarketData(): Promise<RefreshOutcome> {
 
     const pricesUpdated = priceData.updated ?? 0;
     const ratesUpdated = ratesData.updated ?? 0;
+    if (isTotalPriceRefreshFailure(priceData.outcome)) return { status: "error" };
     const changed = (priceData.changed ?? pricesUpdated) + (ratesData.changed ?? ratesUpdated);
     const anySkipped = Boolean(priceData.skippedFresh) || Boolean(ratesData.skippedFresh);
     const ratesFetchFailed = Boolean(ratesData.fetchFailed);

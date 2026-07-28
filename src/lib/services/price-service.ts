@@ -5,6 +5,7 @@ import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
 import { log, withTiming } from "@/lib/logger";
 import { chunk } from "@/lib/batch";
+import type { PriceRefreshOutcome } from "@/lib/price-refresh-contract";
 
 const FETCH_TIMEOUT_MS = 5_000;
 const RETRY_DELAYS_MS = [500, 1_500]; // 2 retries: 500 ms then 1.5 s
@@ -36,7 +37,7 @@ const COINGECKO_BUDGET_MS = 8_000;
 
 export type RefreshPricesResult = {
   /** Whether no price work was due, some or all due quotes persisted, or the refresh failed. */
-  outcome: "no_due_symbols" | "deferred" | "success" | "partial_success" | "total_failure";
+  outcome: PriceRefreshOutcome;
   updated: number;
   /** Persisted rows whose price/currency changed compared with the previous value. */
   changed: number;
@@ -712,18 +713,29 @@ async function refreshPricesForHoldings(
     );
     updated = entries.length;
     changed = pendingChanged;
-    if (changed > 0) revalidateTag("prices", "max");
+  } catch (error) {
+    bulkUpsertFailed = true;
+    errors.push(`Bulk upsert failed: ${String(error)}`);
+    // Release claims so the next request can retry immediately.
+    await releaseClaims(claimedSymbols);
+  }
+
+  if (!bulkUpsertFailed) {
+    // Cache invalidation happens after the write boundary: a cache-provider
+    // failure cannot turn already-persisted prices into a total refresh failure.
+    if (changed > 0) {
+      try {
+        revalidateTag("prices", "max");
+      } catch (error) {
+        log.error("price.refresh.revalidate_failed", { error: String(error) });
+      }
+    }
 
     // Partial fetch: symbols we claimed but got no price for (bad/transient
     // ticker) keep their refreshingAt set by the upsert (it only clears rows it
     // touched). Release them so a retry isn't blocked for the full 30s TTL.
     const fetchedSet = new Set(entries.map(([symbol]) => symbol));
     await releaseClaims(claimedSymbols.filter((symbol) => !fetchedSet.has(symbol)));
-  } catch (error) {
-    bulkUpsertFailed = true;
-    errors.push(`Bulk upsert failed: ${String(error)}`);
-    // Release claims so the next request can retry immediately.
-    await releaseClaims(claimedSymbols);
   }
 
   return {

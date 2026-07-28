@@ -287,6 +287,33 @@ describe("refreshPricesForStockSymbols — claim deduplication", () => {
     );
   });
 
+  it("keeps a persisted refresh successful when cache revalidation throws", async () => {
+    const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
+    vi.mocked(prisma.priceCache.findMany)
+      .mockResolvedValueOnce([{ symbol: "AAPL", updatedAt: staleDate }] as never)
+      .mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValueOnce([{ symbol: "AAPL" }]);
+    vi.mocked(getYahooClient).mockResolvedValue({
+      quote: vi
+        .fn()
+        .mockResolvedValue([{ symbol: "AAPL", regularMarketPrice: 100, currency: "USD" }]),
+    } as never);
+    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValueOnce(1 as never);
+    const { revalidateTag } = await import("next/cache");
+    const { log } = await import("@/lib/logger");
+    vi.mocked(revalidateTag).mockImplementationOnce(() => {
+      throw new Error("cache unavailable");
+    });
+
+    const result = await refreshPricesForStockSymbols(["AAPL"]);
+
+    expect(result).toMatchObject({ outcome: "success", updated: 1, changed: 1 });
+    expect(log.error).toHaveBeenCalledWith(
+      "price.refresh.revalidate_failed",
+      expect.objectContaining({ error: expect.stringContaining("cache unavailable") }),
+    );
+  });
+
   it("releases only the unfetched claim on a partial fetch (one ticker missing)", async () => {
     const staleDate = new Date(Date.now() - PRICE_REFRESH_TTL_MS - 5_000);
 
