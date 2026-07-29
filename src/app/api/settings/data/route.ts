@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { after } from "next/server";
+import { createGunzip, gzip } from "node:zlib";
+import { promisify } from "node:util";
 import type { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma/client";
@@ -18,11 +20,17 @@ const MISSING_ACCOUNT_GOAL_MESSAGE =
   "Import backup contains an account-scoped goal that references a missing account.";
 const MISSING_EXCHANGE_RATE_MESSAGE =
   "Import backup contains mixed-currency snapshots, but the required exchange rate could not be loaded.";
-const MAX_IMPORT_BODY_BYTES = 4 * 1024 * 1024;
+// Vercel Functions accept at most 4.5 MB request and response bodies. Keep a
+// margin for HTTP overhead, while using gzip for the app's backup transport.
+// The decompressed cap bounds the memory consumed while parsing an archive.
+const MAX_COMPRESSED_BACKUP_BYTES = 4 * 1024 * 1024;
+const MAX_UNCOMPRESSED_BACKUP_BYTES = 16 * 1024 * 1024;
+const gzipAsync = promisify(gzip);
 
 type ImportData = z.infer<typeof dataImportSchema>;
 type ImportGoal = NonNullable<ImportData["goals"]>[number];
 type ImportSnapshot = NonNullable<ImportData["snapshots"]>[number];
+class BackupTooLargeError extends Error {}
 
 async function readImportJson(
   request: Request,
@@ -30,7 +38,7 @@ async function readImportJson(
   const contentLength = request.headers.get("content-length");
   if (contentLength) {
     const declaredBytes = Number(contentLength);
-    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_IMPORT_BODY_BYTES) {
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_COMPRESSED_BACKUP_BYTES) {
       return { ok: false, response: failure("Import backup is too large", 413) };
     }
   }
@@ -40,26 +48,72 @@ async function readImportJson(
   }
 
   const reader = request.body.getReader();
-  const decoder = new TextDecoder();
   let receivedBytes = 0;
-  let text = "";
+  const chunks: Uint8Array[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     receivedBytes += value.byteLength;
-    if (receivedBytes > MAX_IMPORT_BODY_BYTES) {
+    if (receivedBytes > MAX_COMPRESSED_BACKUP_BYTES) {
       return { ok: false, response: failure("Import backup is too large", 413) };
     }
-    text += decoder.decode(value, { stream: true });
+    chunks.push(value);
   }
-  text += decoder.decode();
+
+  const bytes = new Uint8Array(receivedBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0]?.trim();
+  let jsonBytes: Uint8Array<ArrayBufferLike> = bytes;
+  if (contentType === "application/gzip" || contentType === "application/x-gzip") {
+    try {
+      jsonBytes = await decompressBackup(bytes);
+    } catch (error) {
+      if (error instanceof BackupTooLargeError) {
+        return { ok: false, response: failure("Import backup is too large", 413) };
+      }
+      return { ok: false, response: failure("Import backup must be valid JSON", 400) };
+    }
+  }
 
   try {
-    return { ok: true, body: JSON.parse(text) };
+    return { ok: true, body: JSON.parse(new TextDecoder().decode(jsonBytes)) };
   } catch {
     return { ok: false, response: failure("Import backup must be valid JSON", 400) };
   }
+}
+
+async function decompressBackup(compressed: Uint8Array): Promise<Uint8Array> {
+  const gunzip = createGunzip();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+
+  return new Promise((resolve, reject) => {
+    gunzip.on("data", (chunk: Uint8Array) => {
+      length += chunk.byteLength;
+      if (length > MAX_UNCOMPRESSED_BACKUP_BYTES) {
+        gunzip.destroy(new BackupTooLargeError());
+        return;
+      }
+      chunks.push(chunk);
+    });
+    gunzip.on("error", reject);
+    gunzip.on("end", () => {
+      const result = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      resolve(result);
+    });
+    gunzip.end(compressed);
+  });
 }
 
 function validateAccountGoalReferences(importData: ImportData) {
@@ -247,10 +301,23 @@ export const GET = withAuth(async (request, _ctx, userId) => {
       calendarEntries: data.calendarEntries.map(serializeCalendarEntry),
     };
 
-    // Return as a raw JSON file download — NOT wrapped in ok() so the blob
-    // content matches the dataImportSchema format for round-trip import.
-    return NextResponse.json(exportData, {
+    const json = JSON.stringify(exportData);
+    if (Buffer.byteLength(json) > MAX_UNCOMPRESSED_BACKUP_BYTES) {
+      return failure("Export backup is too large", 413);
+    }
+
+    const compressed = await gzipAsync(json);
+    if (compressed.byteLength > MAX_COMPRESSED_BACKUP_BYTES) {
+      return failure("Export backup is too large", 413);
+    }
+
+    // The download remains a JSON file after the browser decodes this standard
+    // content encoding. Its wire representation stays below Vercel's function
+    // limit, and the settings UI uploads it with the same gzip transport.
+    return new NextResponse(compressed, {
       headers: {
+        "Content-Encoding": "gzip",
+        "Content-Type": "application/json",
         "Content-Disposition": `attachment; filename="assets-tracker-backup-${new Date().toISOString().split("T")[0]}.json"`,
       },
     });
