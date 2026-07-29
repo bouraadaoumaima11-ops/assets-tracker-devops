@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { fetchUserAccountsWithHoldings } from "@/lib/services/net-worth-service";
 import type { SerializedAccountWithHoldings } from "@/lib/types";
 
+export type AccountPriceMap = Record<string, { price: number; currency?: string | null }>;
+
 /**
  * Cached active-account count. Gates the first paint of the dashboard and
  * the empty states of /history, /projections, /analysis, so it must not
@@ -29,20 +31,25 @@ export const getAccountDetail = cache(
 );
 
 const getAccountPriceMapForSymbolKey = cache(
-  async (symbolsKey: string): Promise<Record<string, number>> => {
+  async (symbolsKey: string): Promise<AccountPriceMap> => {
     const symbols = JSON.parse(symbolsKey) as string[];
     if (symbols.length === 0) return {};
 
     const cachedPrices = await prisma.priceCache.findMany({
       where: { symbol: { in: symbols } },
-      select: { symbol: true, price: true },
+      select: { symbol: true, price: true, currency: true },
     });
 
-    return Object.fromEntries(cachedPrices.map((price) => [price.symbol, Number(price.price)]));
+    return Object.fromEntries(
+      cachedPrices.map((quote) => [
+        quote.symbol,
+        { price: Number(quote.price), currency: quote.currency },
+      ]),
+    );
   },
 );
 
-export function getAccountPriceMap(symbols: string[]): Promise<Record<string, number>> {
+export function getAccountPriceMap(symbols: string[]): Promise<AccountPriceMap> {
   const stableSymbols = [...new Set(symbols)].sort();
   return getAccountPriceMapForSymbolKey(JSON.stringify(stableSymbols));
 }
