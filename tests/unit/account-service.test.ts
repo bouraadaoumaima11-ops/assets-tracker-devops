@@ -14,7 +14,7 @@ vi.mock("next/cache", () => ({
 }));
 
 const h = vi.hoisted(() => ({
-  prices: [] as { symbol: string; price: number }[],
+  prices: [] as { symbol: string; price: number; currency?: string }[],
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -38,7 +38,7 @@ describe("getAccountPriceMap", () => {
   });
 
   it("scopes the query to the requested symbols instead of scanning the table", async () => {
-    h.prices = [{ symbol: "AAPL", price: 200 }];
+    h.prices = [{ symbol: "AAPL", price: 200, currency: "USD" }];
     const { prisma } = await import("@/lib/prisma");
 
     await getAccountPriceMap(["AAPL", "2330.TW"]);
@@ -50,7 +50,7 @@ describe("getAccountPriceMap", () => {
     // An unfiltered findMany — the shape of the bug — has no `where` at all.
     expect(args.where?.symbol?.in).toBeDefined();
     expect(args.where?.symbol?.in).toEqual(["2330.TW", "AAPL"]);
-    expect(args.select).toEqual({ symbol: true, price: true });
+    expect(args.select).toEqual({ symbol: true, price: true, currency: true });
   });
 
   it("dedupes and sorts symbols so the cache key is stable across orderings", async () => {
@@ -64,24 +64,32 @@ describe("getAccountPriceMap", () => {
     expect(args.where.symbol.in).toEqual(["AAPL", "MSFT"]);
   });
 
-  it("returns a symbol -> number map, coercing the Decimal column", async () => {
+  it("returns symbol -> quote records, coercing the Decimal column", async () => {
     h.prices = [
-      { symbol: "AAPL", price: 200.5 },
-      { symbol: "MSFT", price: 410 },
+      { symbol: "AAPL", price: 200.5, currency: "USD" },
+      { symbol: "MSFT", price: 410, currency: "USD" },
     ];
 
     await expect(getAccountPriceMap(["AAPL", "MSFT"])).resolves.toEqual({
-      AAPL: 200.5,
-      MSFT: 410,
+      AAPL: { price: 200.5, currency: "USD" },
+      MSFT: { price: 410, currency: "USD" },
+    });
+  });
+
+  it("keeps each cached price coupled to the currency it was quoted in", async () => {
+    h.prices = [{ symbol: "BTC-EUR", price: 50_000, currency: "EUR" }];
+
+    await expect(getAccountPriceMap(["BTC-EUR"])).resolves.toEqual({
+      "BTC-EUR": { price: 50_000, currency: "EUR" },
     });
   });
 
   it("omits symbols with no cached price rather than inventing a zero", async () => {
-    h.prices = [{ symbol: "AAPL", price: 200 }];
+    h.prices = [{ symbol: "AAPL", price: 200, currency: "USD" }];
 
     const map = await getAccountPriceMap(["AAPL", "NOPRICE"]);
 
-    expect(map).toEqual({ AAPL: 200 });
+    expect(map).toEqual({ AAPL: { price: 200, currency: "USD" } });
     expect("NOPRICE" in map).toBe(false);
   });
 

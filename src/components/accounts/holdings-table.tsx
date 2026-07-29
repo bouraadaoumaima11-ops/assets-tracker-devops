@@ -149,7 +149,10 @@ export function HoldingsTable({
                   {privacyMode
                     ? HIDDEN
                     : h.currentPrice !== null
-                      ? formatCurrency(h.currentPrice, h.currency || "USD")
+                      ? formatCurrency(
+                          h.currentPrice,
+                          h.currentPriceCurrency || h.currency || "USD",
+                        )
                       : "—"}
                 </td>
                 <td className={`px-3 ${tdPy} text-right tabular-nums font-medium`}>
