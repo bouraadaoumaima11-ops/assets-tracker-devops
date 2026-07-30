@@ -55,6 +55,22 @@ describe("createSnapshot date bucketing", () => {
     const args = h.upsertArgs[0] as { create: { date: Date } };
     expect(args.create.date.toISOString().split("T")[0]).toBe("2026-07-06");
   });
+
+  it("uses the caller's captured business day when snapshot execution crosses a day boundary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-06T16:30:00.000Z")); // Jul 7 00:30 Taipei
+
+    await createSnapshot("u1", "USD", {
+      businessDay: new Date("2026-07-06T00:00:00.000Z"),
+    });
+
+    const args = h.upsertArgs[0] as {
+      where: { userId_date_baseCurrency: { date: Date } };
+      create: { date: Date };
+    };
+    expect(args.where.userId_date_baseCurrency.date).toEqual(new Date("2026-07-06T00:00:00.000Z"));
+    expect(args.create.date).toEqual(new Date("2026-07-06T00:00:00.000Z"));
+  });
 });
 
 // Regression #640: the cron refreshes prices/FX and materializes recurring rows,
