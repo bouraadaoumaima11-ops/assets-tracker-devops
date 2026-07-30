@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   dbError: false,
   latestSnapshotAt: null as Date | null,
-  latestCronAt: null as Date | null,
+  cronRuns: [] as Array<{ startedAt: Date; finishedAt: Date | null; ok: boolean }>,
   latestPriceAt: null as Date | null,
   hasPriceableHolding: false,
   hasPriceableWatch: false,
@@ -24,7 +24,26 @@ vi.mock("@/lib/prisma", () => ({
       findFirst: vi.fn(async () => (h.latestSnapshotAt ? { createdAt: h.latestSnapshotAt } : null)),
     },
     cronRun: {
-      findFirst: vi.fn(async () => (h.latestCronAt ? { startedAt: h.latestCronAt } : null)),
+      findFirst: vi.fn(
+        async (args?: {
+          where?: { name?: string; ok?: boolean };
+          select?: { startedAt?: boolean; finishedAt?: boolean; ok?: boolean };
+        }) => {
+          const matchingRuns =
+            args?.where?.ok === undefined
+              ? h.cronRuns
+              : h.cronRuns.filter((run) => run.ok === args.where?.ok);
+          const latest = [...matchingRuns].sort(
+            (left, right) => right.startedAt.getTime() - left.startedAt.getTime(),
+          )[0];
+          if (!latest) return null;
+          return {
+            ...(args?.select?.startedAt && { startedAt: latest.startedAt }),
+            ...(args?.select?.finishedAt && { finishedAt: latest.finishedAt }),
+            ...(args?.select?.ok && { ok: latest.ok }),
+          };
+        },
+      ),
     },
     priceCache: {
       aggregate: vi.fn(async () => ({ _max: { updatedAt: h.latestPriceAt } })),
@@ -41,7 +60,7 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-describe("health route price freshness", () => {
+describe("health route", () => {
   const now = new Date("2026-07-28T12:00:00.000Z");
 
   beforeEach(() => {
@@ -50,7 +69,14 @@ describe("health route price freshness", () => {
     vi.setSystemTime(now);
     h.dbError = false;
     h.latestSnapshotAt = now;
-    h.latestCronAt = now;
+    h.cronRuns = [
+      {
+        startedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
+        finishedAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
+        ok: false,
+      },
+      { startedAt: now, finishedAt: now, ok: true },
+    ];
     h.latestPriceAt = now;
     h.hasPriceableHolding = false;
     h.hasPriceableWatch = false;
@@ -86,6 +112,87 @@ describe("health route price freshness", () => {
     await expect(response.json()).resolves.toMatchObject({
       status: "degraded",
       priceCache: "stale",
+    });
+  });
+
+  it("degrades for the latest completed failed attempt despite an older recent success", async () => {
+    const olderSuccess = new Date(now.getTime() - 60 * 60 * 1000);
+    h.cronRuns = [
+      { startedAt: olderSuccess, finishedAt: olderSuccess, ok: true },
+      { startedAt: now, finishedAt: now, ok: false },
+    ];
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET(new Request("http://unit.test/api/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toMatchObject({
+      status: "degraded",
+      cron: "error",
+      latestCronAt: now.toISOString(),
+      latestCronAgeMs: 0,
+      lastCronSuccessAt: olderSuccess.toISOString(),
+      cronAgeMs: 60 * 60 * 1000,
+    });
+    expect(body).not.toHaveProperty("users");
+    expect(body).not.toHaveProperty("userId");
+    expect(body).not.toHaveProperty("failedUserIds");
+  });
+
+  it("reports a recent unfinished attempt as running while a previous success keeps health fresh", async () => {
+    const previousSuccess = new Date(now.getTime() - 60 * 60 * 1000);
+    const activeStartedAt = new Date(now.getTime() - 60 * 1000);
+    h.cronRuns = [
+      { startedAt: previousSuccess, finishedAt: previousSuccess, ok: true },
+      { startedAt: activeStartedAt, finishedAt: null, ok: false },
+    ];
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET(new Request("http://unit.test/api/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "ok",
+      cron: "running",
+      latestCronAt: activeStartedAt.toISOString(),
+      latestCronAgeMs: 60 * 1000,
+      lastCronSuccessAt: previousSuccess.toISOString(),
+      cronAgeMs: 60 * 60 * 1000,
+    });
+  });
+
+  it("keeps a first-ever unfinished attempt degraded while reporting it as running", async () => {
+    const activeStartedAt = new Date(now.getTime() - 60 * 1000);
+    h.cronRuns = [{ startedAt: activeStartedAt, finishedAt: null, ok: false }];
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET(new Request("http://unit.test/api/health"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "degraded",
+      cron: "running",
+      latestCronAt: activeStartedAt.toISOString(),
+      lastCronSuccessAt: null,
+      cronAgeMs: null,
+    });
+  });
+
+  it("degrades an unfinished attempt that has exceeded the operational grace period", async () => {
+    const previousSuccess = new Date(now.getTime() - 60 * 60 * 1000);
+    const overdueStartedAt = new Date(now.getTime() - 5 * 60 * 1000 - 1);
+    h.cronRuns = [
+      { startedAt: previousSuccess, finishedAt: previousSuccess, ok: true },
+      { startedAt: overdueStartedAt, finishedAt: null, ok: false },
+    ];
+    const { GET } = await import("@/app/api/health/route");
+    const response = await GET(new Request("http://unit.test/api/health"));
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      status: "degraded",
+      cron: "error",
+      latestCronAt: overdueStartedAt.toISOString(),
+      latestCronAgeMs: 5 * 60 * 1000 + 1,
+      lastCronSuccessAt: previousSuccess.toISOString(),
     });
   });
 

@@ -440,8 +440,9 @@ export function computePerformanceAttribution(
 
   return accounts
     .map((account) => {
-      const startValue = startSnap.accountValues[account.id] ?? 0;
-      const endValue = endSnap.accountValues[account.id] ?? 0;
+      const netWorthDirection = account.type === "LIABILITY" ? -1 : 1;
+      const startValue = (startSnap.accountValues[account.id] ?? 0) * netWorthDirection;
+      const endValue = (endSnap.accountValues[account.id] ?? 0) * netWorthDirection;
       const totalDelta = endValue - startValue;
       const cashContribution = cashByAccount.get(account.id) ?? 0;
       const marketPerformance = totalDelta - cashContribution;

@@ -281,24 +281,40 @@ export async function GET(request: Request) {
       : failedUserIds.length > 0
         ? `Snapshot failed for users: ${failedUserIds.join(", ")}`
         : null;
+    const partiallyFailed = failedUserIds.length > 0;
     await prisma.cronRun.update({
       where: { id: cronRun.id },
       data: {
-        ok: !budgetExhausted,
+        ok: !budgetExhausted && !partiallyFailed,
         finishedAt,
         durationMs: finishedAt.getTime() - startedAt.getTime(),
         ...(snapshotError && { error: snapshotError }),
       },
     });
-    finishSnapshotCronCheckIn(checkIn, budgetExhausted ? "error" : "ok");
+    finishSnapshotCronCheckIn(checkIn, budgetExhausted || partiallyFailed ? "error" : "ok");
 
-    return budgetExhausted
-      ? failure(snapshotError ?? "Snapshot budget exhausted", 503)
+    if (budgetExhausted) {
+      return failure(snapshotError ?? "Snapshot budget exhausted", 503);
+    }
+    const result = {
+      success: !partiallyFailed,
+      snapshotIds: snapshots.map((s) => s.id),
+      failedUserIds,
+      timestamp: finishedAt.toISOString(),
+    };
+    return partiallyFailed
+      ? Response.json(
+          {
+            error: { message: "Snapshot partially completed" },
+            data: result,
+          },
+          { status: 503 },
+        )
       : ok({
           success: true,
-          snapshotIds: snapshots.map((s) => s.id),
+          snapshotIds: result.snapshotIds,
           failedUserIds,
-          timestamp: finishedAt.toISOString(),
+          timestamp: result.timestamp,
         });
   } catch (error) {
     log.error("cron.snapshot.failed", { error: String(error) });

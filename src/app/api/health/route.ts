@@ -8,15 +8,14 @@ import { log } from "@/lib/logger";
  * Unauthenticated by design (health checks must work without a session) but
  * rate-limited per IP so it can't be abused as a free DB-ping endpoint. Returns
  * only non-sensitive status: DB connectivity, the latest snapshot timestamp +
- * age, the latest successful cron run timestamp + age, and the response
+ * age, the latest cron attempt and successful run timestamps, and the response
  * timestamp. No user data is exposed.
  *
  * Four independent signals are reported and rolled up into `status`:
  *   - db       → DB reachability ("ok" / "error").
- *   - cron     → freshness of the latest *successful* CronRun (name "snapshot").
- *                This is the E18 pull-based alarm: it goes stale when no cron has
- *                succeeded within the freshness window — even if old snapshot
- *                rows still exist. Free-plan compatible (no extra cron needed).
+ *   - cron     → outcome and freshness of the latest CronRun (name "snapshot").
+ *                A recent unfinished attempt is "running"; a completed failure
+ *                or overdue unfinished attempt is degraded.
  *   - snapshot → freshness of the most recent NetWorthSnapshot (the E17 signal).
  *   - priceCache → freshness of the newest cached market quote. Only aggregate
  *                   freshness metadata is exposed; no symbols, prices, or user
@@ -25,14 +24,21 @@ import { log } from "@/lib/logger";
  *
  * Overall `status` is the worst of the four:
  *   - "unhealthy" → DB unreachable. HTTP 503.
- *   - "degraded"  → DB reachable but the cron OR the latest snapshot is
- *                   stale/absent (> 36 h). HTTP 503.
+ *   - "degraded"  → DB reachable but the latest cron failed, or freshness data
+ *                   is stale/absent (> 36 h). HTTP 503.
  *   - "ok"        → all applicable signals healthy. HTTP 200.
  *
  * The 36 h freshness window is shared across snapshot, cron, and prices so
  * the three freshness signals can't drift.
  */
 const FRESHNESS_MAX_AGE_MS = 36 * 60 * 60 * 1000;
+
+/**
+ * Vercel terminates this cron at roughly 60 seconds. Five minutes avoids
+ * transient alerts while leaving only a small window before an unfinished
+ * audit row is treated as a likely crash.
+ */
+const CRON_RUNNING_GRACE_MS = 5 * 60 * 1000;
 
 /** CronRun.name written by /api/cron/snapshot. */
 const SNAPSHOT_CRON_NAME = "snapshot";
@@ -46,6 +52,10 @@ export async function GET(request: Request) {
   let dbOk = false;
   let latestSnapshotAt: string | null = null;
   let snapshotAgeMs: number | null = null;
+  let latestCronAt: string | null = null;
+  let latestCronAgeMs: number | null = null;
+  let latestCronOk: boolean | null = null;
+  let latestCronRunning = false;
   let lastCronSuccessAt: string | null = null;
   let cronAgeMs: number | null = null;
   let latestPriceAt: string | null = null;
@@ -54,31 +64,54 @@ export async function GET(request: Request) {
 
   try {
     // Lightweight liveness check + most-recent snapshot freshness + latest
-    // successful cron run, and newest PriceCache timestamp in one parallel
-    // round. PriceCache.updatedAt has its own index, so the aggregate stays a
-    // lightweight freshness probe rather than loading any market data.
-    const [, latestSnapshot, latestCron, latestPrice] = await Promise.all([
-      prisma.$queryRaw`SELECT 1`,
-      prisma.netWorthSnapshot.findFirst({
-        orderBy: { createdAt: "desc" },
-        select: { createdAt: true },
-      }),
-      prisma.cronRun.findFirst({
-        where: { name: SNAPSHOT_CRON_NAME, ok: true },
-        orderBy: { startedAt: "desc" },
-        select: { startedAt: true },
-      }),
-      prisma.priceCache.aggregate({
-        _max: { updatedAt: true },
-      }),
-    ]);
+    // cron attempt/success, and newest PriceCache timestamp in one parallel
+    // round. The two CronRun reads constrain `ok` so the existing
+    // [name, ok, startedAt] index can satisfy each ordering. PriceCache.updatedAt
+    // has its own index, keeping the aggregate a lightweight freshness probe.
+    const [, latestSnapshot, latestCronSuccess, latestCronFailure, latestPrice] = await Promise.all(
+      [
+        prisma.$queryRaw`SELECT 1`,
+        prisma.netWorthSnapshot.findFirst({
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        }),
+        prisma.cronRun.findFirst({
+          where: { name: SNAPSHOT_CRON_NAME, ok: true },
+          orderBy: { startedAt: "desc" },
+          select: { startedAt: true },
+        }),
+        prisma.cronRun.findFirst({
+          where: { name: SNAPSHOT_CRON_NAME, ok: false },
+          orderBy: { startedAt: "desc" },
+          select: { startedAt: true, finishedAt: true },
+        }),
+        prisma.priceCache.aggregate({
+          _max: { updatedAt: true },
+        }),
+      ],
+    );
     if (latestSnapshot) {
       latestSnapshotAt = latestSnapshot.createdAt.toISOString();
       snapshotAgeMs = now - latestSnapshot.createdAt.getTime();
     }
+    if (latestCronSuccess) {
+      lastCronSuccessAt = latestCronSuccess.startedAt.toISOString();
+      cronAgeMs = now - latestCronSuccess.startedAt.getTime();
+    }
+    const failureIsLatest =
+      latestCronFailure &&
+      (!latestCronSuccess ||
+        latestCronFailure.startedAt.getTime() >= latestCronSuccess.startedAt.getTime());
+    const latestCron = failureIsLatest ? latestCronFailure : latestCronSuccess;
     if (latestCron) {
-      lastCronSuccessAt = latestCron.startedAt.toISOString();
-      cronAgeMs = now - latestCron.startedAt.getTime();
+      latestCronAt = latestCron.startedAt.toISOString();
+      latestCronAgeMs = now - latestCron.startedAt.getTime();
+      latestCronOk = !failureIsLatest;
+      latestCronRunning = Boolean(
+        failureIsLatest &&
+        latestCronFailure.finishedAt === null &&
+        latestCronAgeMs <= CRON_RUNNING_GRACE_MS,
+      );
     }
     if (latestPrice._max.updatedAt) {
       latestPriceAt = latestPrice._max.updatedAt.toISOString();
@@ -105,7 +138,10 @@ export async function GET(request: Request) {
   }
 
   const snapshotFresh = snapshotAgeMs !== null && snapshotAgeMs <= FRESHNESS_MAX_AGE_MS;
-  const cronFresh = cronAgeMs !== null && cronAgeMs <= FRESHNESS_MAX_AGE_MS;
+  const lastCronSuccessFresh = cronAgeMs !== null && cronAgeMs <= FRESHNESS_MAX_AGE_MS;
+  const cronFresh = latestCronRunning
+    ? lastCronSuccessFresh
+    : latestCronOk === true && latestCronAgeMs !== null && latestCronAgeMs <= FRESHNESS_MAX_AGE_MS;
   const priceFresh =
     priceAgeMs === null ? !emptyCacheHasPriceableAssets : priceAgeMs <= FRESHNESS_MAX_AGE_MS;
 
@@ -124,16 +160,27 @@ export async function GET(request: Request) {
   // Overall status is the worst of {db, cron, snapshot, priceCache}.
   const status = !dbOk ? "unhealthy" : snapshotFresh && cronFresh && priceFresh ? "ok" : "degraded";
   const httpStatus = status === "ok" ? 200 : 503;
+  const cron = !dbOk
+    ? "unknown"
+    : latestCronRunning
+      ? "running"
+      : latestCronOk === false
+        ? "error"
+        : cronFresh
+          ? "ok"
+          : "stale";
 
   return Response.json(
     {
       status,
       db: dbOk ? "ok" : "error",
-      cron: !dbOk ? "unknown" : cronFresh ? "ok" : "stale",
+      cron,
       snapshot: !dbOk ? "unknown" : snapshotFresh ? "ok" : "stale",
       priceCache,
       latestSnapshotAt,
       snapshotAgeMs,
+      latestCronAt,
+      latestCronAgeMs,
       lastCronSuccessAt,
       cronAgeMs,
       latestPriceAt,

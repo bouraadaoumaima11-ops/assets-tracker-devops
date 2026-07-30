@@ -44,6 +44,7 @@ import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 import type { SerializedAccountWithHoldings, SerializedHolding } from "@/lib/types";
 import { showUndoDeleteToast } from "@/lib/undo-delete";
+import type { AccountPriceMap } from "@/lib/services/account-service";
 
 type SortOrder = "asc" | "desc";
 
@@ -53,7 +54,7 @@ export function AccountDetail({
   ratesMap = {},
 }: {
   account: SerializedAccountWithHoldings;
-  priceMap: Record<string, number>;
+  priceMap: AccountPriceMap;
   ratesMap?: Record<string, number>;
 }) {
   const router = useRouter();
@@ -118,12 +119,21 @@ export function AccountDetail({
   const holdingsWithValue: HoldingWithPrice[] = useMemo(
     () =>
       account.holdings.map((h) => {
-        const price = priceMap[h.symbol] ?? null;
-        const hc = h.currency || "USD";
-        const rate = hc === account.currency ? 1 : (ratesMap[`${hc}_${account.currency}`] ?? 1);
+        const quote = priceMap[h.symbol];
+        const price = quote?.price ?? null;
+        const quoteCurrency = quote?.currency || h.currency || "USD";
+        const rate =
+          quoteCurrency === account.currency
+            ? 1
+            : (ratesMap[`${quoteCurrency}_${account.currency}`] ?? 1);
         const multiplier = h.assetType === "OPTION" ? (h.contractMultiplier ?? 100) : 1;
         const marketValue = price !== null ? price * h.quantity * multiplier * rate : null;
-        return { ...h, currentPrice: price, marketValue };
+        return {
+          ...h,
+          currentPrice: price,
+          currentPriceCurrency: price !== null ? quoteCurrency : null,
+          marketValue,
+        };
       }),
     [account.holdings, account.currency, priceMap, ratesMap],
   );

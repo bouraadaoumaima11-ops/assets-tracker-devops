@@ -68,12 +68,15 @@ export async function getProjectionData(
     .sort(([a], [b]) => a - b)
     .map(([year, netWorth]) => ({ year, netWorth }));
 
-  // Trailing 12-month net cash (DEPOSIT − WITHDRAWAL)
+  // Trailing 12-month net-worth cash impact. Liability balance changes run in
+  // the opposite direction from assets.
   const twelveMonthsAgo = new Date();
   twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
 
   const accountIds = accountsRaw.map((a) => a.id);
-  const accountCurrencyMap = new Map(accountsRaw.map((a) => [a.id, a.currency]));
+  const accountMetaMap = new Map(
+    accountsRaw.map((account) => [account.id, { currency: account.currency, type: account.type }]),
+  );
 
   const transactions = await prisma.cashTransaction.findMany({
     where: {
@@ -91,10 +94,12 @@ export async function getProjectionData(
 
   let trailing12mSavings = 0;
   for (const tx of transactions) {
-    const currency = accountCurrencyMap.get(tx.accountId) ?? "USD";
+    const account = accountMetaMap.get(tx.accountId);
+    const currency = account?.currency ?? "USD";
     const rate = resolveRate(allRatesMap, currency, baseCurrency) ?? 1;
     const amount = Number(tx.amount) * rate;
-    trailing12mSavings += tx.type === "DEPOSIT" ? amount : -amount;
+    const balanceDelta = tx.type === "DEPOSIT" ? amount : -amount;
+    trailing12mSavings += account?.type === "LIABILITY" ? -balanceDelta : balanceDelta;
   }
 
   return { latestNetWorth, trailing12mSavings, annualSnapshots, hasData: true };

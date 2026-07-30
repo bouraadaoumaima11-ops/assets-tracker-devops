@@ -69,6 +69,18 @@ function formatBackupDate(value: string | null, locale: string) {
   return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(date);
 }
 
+async function compressBackup(data: unknown) {
+  const json = JSON.stringify(data);
+  if (typeof CompressionStream === "undefined") {
+    return new Blob([json], { type: "application/json" });
+  }
+
+  const stream = new Blob([json], { type: "application/json" })
+    .stream()
+    .pipeThrough(new CompressionStream("gzip"));
+  return new Response(stream, { headers: { "Content-Type": "application/gzip" } }).blob();
+}
+
 function buildImportPreview(data: unknown, file: File): ImportPreview | null {
   if (!isRecord(data) || !Array.isArray(data.accounts)) return null;
 
@@ -211,10 +223,11 @@ export function DataManagement() {
       setShowConfirm(false);
       setImportError(null);
 
+      const backup = await compressBackup(parsedImport);
       const response = await fetch("/api/settings/data", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsedImport),
+        headers: { "Content-Type": backup.type },
+        body: backup,
       });
 
       if (!response.ok) {

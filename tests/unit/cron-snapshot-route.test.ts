@@ -218,7 +218,7 @@ describe("snapshot cron route", () => {
     expect(vi.mocked(prisma.holdingTransaction.createMany)).not.toHaveBeenCalled();
   });
 
-  it("returns 200 and records failed user ids when only some snapshots fail", async () => {
+  it("returns a retryable degraded result after preserving successful snapshots when one user fails", async () => {
     h.users = [
       { id: "user1", appSettings: { baseCurrency: "USD" } },
       { id: "user2", appSettings: { baseCurrency: "TWD" } },
@@ -235,10 +235,13 @@ describe("snapshot cron route", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
+      error: {
+        message: "Snapshot partially completed",
+      },
       data: {
-        success: true,
+        success: false,
         snapshotIds: ["snapshot-user1"],
         failedUserIds: ["user2"],
       },
@@ -254,11 +257,43 @@ describe("snapshot cron route", () => {
     expect(prisma.cronRun.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          ok: true,
+          ok: false,
           error: expect.stringContaining("user2"),
         }),
       }),
     );
+    expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "error");
+  });
+
+  it("records a clean success and invalidates every successful user's history", async () => {
+    h.users = [
+      { id: "user1", appSettings: { baseCurrency: "USD" } },
+      { id: "user2", appSettings: { baseCurrency: "TWD" } },
+    ];
+    const { GET } = await import("@/app/api/cron/snapshot/route");
+    const { prisma } = await import("@/lib/prisma");
+    const { finishSnapshotCronCheckIn } = await import("@/lib/sentry-cron");
+
+    const response = await GET(
+      new Request("http://unit.test/api/cron/snapshot", {
+        headers: { authorization: "Bearer test-secret" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        success: true,
+        snapshotIds: ["snapshot-user1", "snapshot-user2"],
+        failedUserIds: [],
+      },
+    });
+    expect(h.events).toContain("revalidate:snapshots");
+    expect(h.events).toContain("revalidate:history:user1");
+    expect(h.events).toContain("revalidate:history:user2");
+    const auditData = vi.mocked(prisma.cronRun.update).mock.calls[0][0].data;
+    expect(auditData).toMatchObject({ ok: true });
+    expect(auditData).not.toHaveProperty("error");
     expect(finishSnapshotCronCheckIn).toHaveBeenCalledWith("check-in", "ok");
   });
 
@@ -281,6 +316,7 @@ describe("snapshot cron route", () => {
 
     expect(response.status).toBe(500);
     expect(h.events).not.toContain("revalidate:snapshots");
+    expect(h.events.some((event) => event.startsWith("revalidate:history:"))).toBe(false);
     expect(log.error).toHaveBeenCalledWith("cron.snapshot.failed", {
       error: "Error: Snapshot failed for users: user1, user2",
     });
