@@ -147,6 +147,12 @@ function remapGoalScopeRefId(goal: ImportGoal, accountIdMap: Map<string, string>
   return remapped;
 }
 
+function latestImportTimestamp(first: string | undefined, second: string | undefined) {
+  if (!first) return second ?? null;
+  if (!second) return first;
+  return Date.parse(first) >= Date.parse(second) ? first : second;
+}
+
 function dedupeSnapshots(snapshots: ImportSnapshot[] | undefined, targetBaseCurrency: string) {
   // Same tie-break as normalizeSnapshots: prefer a baseCurrency match with the
   // target, then the greatest createdAt. The export's snapshot order is not
@@ -408,6 +414,7 @@ export const POST = withAuth(async (request, _ctx, userId) => {
           // Recurring rules — created before holdings/cashTransactions so their
           // new ids are available to remap HoldingTransaction/CashTransaction.recurringId.
           const recurringCashIdMap = new Map<string, string>();
+          const recurringCashCreatedAtMap = new Map<string, string>();
           if (Array.isArray(acc.recurringCashTransactions)) {
             for (const rule of acc.recurringCashTransactions) {
               const created = await tx.recurringCashTransaction.create({
@@ -425,7 +432,10 @@ export const POST = withAuth(async (request, _ctx, userId) => {
                   updatedAt: rule.updatedAt,
                 },
               });
-              if (rule.id) recurringCashIdMap.set(rule.id, created.id);
+              if (rule.id) {
+                recurringCashIdMap.set(rule.id, created.id);
+                if (rule.createdAt) recurringCashCreatedAtMap.set(rule.id, rule.createdAt);
+              }
             }
           }
 
@@ -501,17 +511,33 @@ export const POST = withAuth(async (request, _ctx, userId) => {
           if (Array.isArray(acc.cashTransactions) && acc.cashTransactions.length > 0) {
             await tx.cashTransaction.createMany({
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              data: acc.cashTransactions.map((t: any) => ({
-                accountId: newAccount.id,
-                type: t.type,
-                amount: t.amount,
-                note: t.note,
-                createdAt: t.createdAt,
-                // Preserve null as null — analysis bucketing falls back to
-                // createdAt only when occurrenceDate is null.
-                occurrenceDate: t.occurrenceDate ?? null,
-                recurringId: t.recurringId ? (recurringCashIdMap.get(t.recurringId) ?? null) : null,
-              })),
+              data: acc.cashTransactions.map((t: any) => {
+                const estimatedMaterializedAt = t.recurringId
+                  ? latestImportTimestamp(t.createdAt, recurringCashCreatedAtMap.get(t.recurringId))
+                  : null;
+
+                return {
+                  accountId: newAccount.id,
+                  type: t.type,
+                  amount: t.amount,
+                  note: t.note,
+                  createdAt: t.createdAt,
+                  // Preserve null as null — analysis bucketing falls back to
+                  // createdAt only when occurrenceDate is null.
+                  occurrenceDate: t.occurrenceDate ?? null,
+                  recurringId: t.recurringId
+                    ? (recurringCashIdMap.get(t.recurringId) ?? null)
+                    : null,
+                  // v1.4+ backups preserve durable provenance directly. For an
+                  // older backup, the best recoverable posting bound is the
+                  // later of the transaction and linked rule creation times.
+                  materializedAt: t.materializedAt ?? estimatedMaterializedAt,
+                  materializedAtEstimated:
+                    t.materializedAt != null
+                      ? t.materializedAtEstimated
+                      : estimatedMaterializedAt != null,
+                };
+              }),
             });
           }
         }

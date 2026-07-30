@@ -140,12 +140,17 @@ model CashTransaction {
   // materialization idempotent (a re-run can't double-post the same occurrence).
   // Both NULL for manually-entered transactions (Postgres treats NULLs as
   // distinct, so manual rows never collide on this constraint).
-  recurringId    String?
-  recurring      RecurringCashTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
-  occurrenceDate DateTime?                 @db.Date
+  recurringId             String?
+  recurring               RecurringCashTransaction? @relation(fields: [recurringId], references: [id], onDelete: SetNull)
+  occurrenceDate          DateTime?                 @db.Date
+  // Durable recurring-generation provenance. Unlike recurringId this survives
+  // rule deletion; occurrenceDate remains the reporting bucket.
+  materializedAt          DateTime?                 @db.Timestamptz(3)
+  materializedAtEstimated Boolean                   @default(false)
 
   @@unique([recurringId, occurrenceDate])
   @@index([accountId, createdAt(sort: Desc)])
+  @@index([accountId, materializedAt])
 }
 
 enum RecurringFrequency {

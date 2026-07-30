@@ -436,6 +436,7 @@ const importTimestamp = z.iso.datetime().optional();
 // to; manual rows export it as null. Preserve null as null — never default it,
 // since analysis bucketing falls back to createdAt only when it is null.
 const importOccurrenceDate = z.iso.datetime().optional().nullable();
+const importMaterializedAt = z.iso.datetime().optional().nullable();
 const importHoldingTransactionUnitPrice = decimalSchema
   .optional()
   .nullable()
@@ -508,6 +509,8 @@ export const dataImportSchema = z.object({
               createdAt: importTimestamp,
               occurrenceDate: importOccurrenceDate,
               recurringId: z.string().optional().nullable(),
+              materializedAt: importMaterializedAt,
+              materializedAtEstimated: z.boolean().default(false),
             }),
           )
           .max(MAX_IMPORT_CASH_TRANSACTIONS_PER_ACCOUNT)

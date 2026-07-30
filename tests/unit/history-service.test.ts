@@ -19,6 +19,9 @@ interface CashTransactionFixture {
   type: "DEPOSIT" | "WITHDRAWAL";
   createdAt: Date;
   occurrenceDate: Date | null;
+  recurringId: string | null;
+  materializedAt: Date | null;
+  materializedAtEstimated: boolean;
   accountId: string;
 }
 const h = vi.hoisted(() => ({
@@ -61,6 +64,28 @@ vi.mock("@/lib/prisma", () => ({
           op === "gt" ? a.getTime() > b.getTime() : a.getTime() >= b.getTime();
         return h.cashTransactions.filter((tx) =>
           or.some((branch) => {
+            const recurring = branch.recurringId as { not?: null } | null | undefined;
+            if (recurring === null && tx.recurringId !== null) return false;
+            if (recurring && tx.recurringId === null) return false;
+
+            const materialized = branch.materializedAt as { not?: null } | null | undefined;
+            if (materialized === null && tx.materializedAt !== null) return false;
+            if (materialized) {
+              if (tx.materializedAt === null) return false;
+              if (
+                "gt" in materialized &&
+                tx.materializedAt.getTime() <= (materialized.gt as Date).getTime()
+              ) {
+                return false;
+              }
+            }
+            if (
+              typeof branch.materializedAtEstimated === "boolean" &&
+              tx.materializedAtEstimated !== branch.materializedAtEstimated
+            ) {
+              return false;
+            }
+
             const occ = branch.occurrenceDate as Record<string, Date> | null | undefined;
             if (occ && typeof occ === "object") {
               if (tx.occurrenceDate == null) return false;
@@ -73,7 +98,10 @@ vi.mock("@/lib/prisma", () => ({
               const [op, floor] = Object.entries(created)[0];
               return cmp(op, tx.createdAt, floor);
             }
-            return false;
+            const created = branch.createdAt as Record<string, Date> | undefined;
+            if (!created) return materialized !== undefined || recurring !== undefined;
+            const [op, floor] = Object.entries(created)[0];
+            return cmp(op, tx.createdAt, floor);
           }),
         );
       }),
@@ -357,6 +385,9 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
       type: "DEPOSIT",
       createdAt: new Date("2026-07-01T10:00:00.000Z"),
       occurrenceDate: null,
+      recurringId: null,
+      materializedAt: null,
+      materializedAtEstimated: false,
       accountId: "acc",
       ...over,
     };
@@ -435,8 +466,16 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
     // counting them as contributions double-counts the opening deposit (#509).
     const floor = new Date("2026-03-05T21:30:00.000Z");
     expect(args.where.OR).toEqual([
-      { occurrenceDate: { gt: floor } },
-      { occurrenceDate: null, createdAt: { gt: floor } },
+      { materializedAtEstimated: false, materializedAt: { gt: floor } },
+      { materializedAtEstimated: true, materializedAt: { not: null } },
+      { materializedAt: null, recurringId: { not: null } },
+      { materializedAt: null, recurringId: null, occurrenceDate: { gt: floor } },
+      {
+        materializedAt: null,
+        recurringId: null,
+        occurrenceDate: null,
+        createdAt: { gt: floor },
+      },
     ]);
     // The accountId/type conditions stay ANDed alongside the floor OR.
     expect(args.where.accountId).toEqual({ in: ["acc"] });
@@ -525,6 +564,74 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
       where: Record<string, unknown>;
     };
     expect(args.where.OR).toBeUndefined();
+  });
+
+  it("includes a generated catch-up posted after the first snapshot after its rule is deleted", async () => {
+    h.accounts = [account()];
+    h.latestSnapshot = row({
+      id: "first",
+      date: new Date("2026-03-05T00:00:00.000Z"),
+      createdAt: new Date("2026-03-05T21:30:00.000Z"),
+    });
+    h.cashTransactions = [
+      cashTx({
+        amount: 75,
+        recurringId: null,
+        occurrenceDate: new Date("2026-03-01T00:00:00.000Z"),
+        createdAt: new Date("2026-03-01T00:00:00.000Z"),
+        materializedAt: new Date("2026-03-06T21:30:00.000Z"),
+      }),
+    ];
+
+    const result = await getAccountMonthlyCashFlow("u1", "USD");
+
+    expect(result).toEqual([{ accountId: "acc", monthKey: "2026-03", contributions: 75 }]);
+  });
+
+  it("uses an estimated rule-creation posting bound for a legacy immediate backfill", async () => {
+    h.accounts = [account()];
+    h.latestSnapshot = row({
+      id: "first",
+      date: new Date("2026-03-05T00:00:00.000Z"),
+      createdAt: new Date("2026-03-05T21:30:00.000Z"),
+    });
+    h.cashTransactions = [
+      cashTx({
+        amount: 80,
+        recurringId: null,
+        occurrenceDate: new Date("2026-03-01T00:00:00.000Z"),
+        createdAt: new Date("2026-03-01T00:00:00.000Z"),
+        materializedAt: new Date("2026-03-06T12:00:00.000Z"),
+        materializedAtEstimated: true,
+      }),
+    ];
+
+    const result = await getAccountMonthlyCashFlow("u1", "USD");
+
+    expect(result).toEqual([{ accountId: "acc", monthKey: "2026-03", contributions: 80 }]);
+  });
+
+  it("excludes a legacy backdated recurring flow already represented in the first snapshot", async () => {
+    h.accounts = [account()];
+    h.latestSnapshot = row({
+      id: "first",
+      date: new Date("2026-01-01T00:00:00.000Z"),
+      createdAt: new Date("2025-12-31T21:30:01.000Z"),
+    });
+    h.cashTransactions = [
+      cashTx({
+        amount: 100,
+        recurringId: "monthly-deposit",
+        occurrenceDate: new Date("2026-01-01T00:00:00.000Z"),
+        // Rows created before #658 backdated both timestamps to the business
+        // day, even though cron had posted the balance before this snapshot.
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      }),
+    ];
+
+    const result = await getAccountMonthlyCashFlow("u1", "USD");
+
+    expect(result).toEqual([]);
   });
 });
 

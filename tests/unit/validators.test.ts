@@ -451,7 +451,7 @@ describe("dataImportSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("preserves transaction occurrenceDate through parsing, keeping null as null", () => {
+  it("preserves transaction occurrenceDate and recurring materialization provenance", () => {
     const result = dataImportSchema.safeParse({
       version: "1.2",
       accounts: [
@@ -475,7 +475,13 @@ describe("dataImportSchema", () => {
             },
           ],
           cashTransactions: [
-            { type: "DEPOSIT", amount: "50", occurrenceDate: "2026-06-15T00:00:00.000Z" },
+            {
+              type: "DEPOSIT",
+              amount: "50",
+              occurrenceDate: "2026-06-15T00:00:00.000Z",
+              materializedAt: "2026-06-15T21:30:00.000Z",
+              materializedAtEstimated: false,
+            },
             { type: "WITHDRAWAL", amount: "10", occurrenceDate: null },
             { type: "DEPOSIT", amount: "5" },
           ],
@@ -495,6 +501,16 @@ describe("dataImportSchema", () => {
       "2026-06-15T00:00:00.000Z",
       null,
       undefined,
+    ]);
+    expect(account.cashTransactions?.map((t) => t.materializedAt)).toEqual([
+      "2026-06-15T21:30:00.000Z",
+      undefined,
+      undefined,
+    ]);
+    expect(account.cashTransactions?.map((t) => t.materializedAtEstimated)).toEqual([
+      false,
+      false,
+      false,
     ]);
   });
 

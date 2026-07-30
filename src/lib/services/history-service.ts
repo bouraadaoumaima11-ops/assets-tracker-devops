@@ -498,9 +498,11 @@ export async function getAccountMonthlyCashFlow(
   // aligns the contribution window with that baseline, so only flows that
   // occurred AFTER the starting snapshot are attributed to the first bucket.
   // (Months before the first snapshot are unreachable by the analysis UI, so
-  // this also preserves PE29's scan-narrowing intent.) The floor compares
-  // against the effective date (occurrenceDate ?? createdAt) to match the
-  // month-key bucketing below.
+  // this also preserves PE29's scan-narrowing intent.) Manual rows retain the
+  // effective-date boundary (occurrenceDate ?? createdAt) from #509/#551.
+  // Recurring rows instead use their durable materializedAt posting instant
+  // because occurrenceDate is a business-day bucket that can be later than the
+  // wall-clock snapshot; bucketing below still uses occurrenceDate.
   const floor = firstSnapshot ? (firstSnapshot.createdAt ?? firstSnapshot.date) : null;
 
   const transactions = await prisma.cashTransaction.findMany({
@@ -510,19 +512,74 @@ export async function getAccountMonthlyCashFlow(
       ...(floor
         ? {
             OR: [
-              { occurrenceDate: { gt: floor } },
-              { occurrenceDate: null, createdAt: { gt: floor } },
+              // Exact generated rows can be narrowed in SQL. Durable
+              // provenance survives ON DELETE SET NULL.
+              {
+                materializedAtEstimated: false,
+                materializedAt: { gt: floor },
+              },
+              // Estimated legacy rows need application-level handling because
+              // their exact posting instant was never stored.
+              {
+                materializedAtEstimated: true,
+                materializedAt: { not: null },
+              },
+              // Compatibility for a stale/pre-migration row. A deployed
+              // migration backfills all still-linked rows into the branch
+              // above; keeping this branch makes partial restores safe.
+              { materializedAt: null, recurringId: { not: null } },
+              // Manual/backdated flows preserve the #509/#551 effective-date
+              // boundary.
+              { materializedAt: null, recurringId: null, occurrenceDate: { gt: floor } },
+              {
+                materializedAt: null,
+                recurringId: null,
+                occurrenceDate: null,
+                createdAt: { gt: floor },
+              },
             ],
           }
         : {}),
     },
-    select: { amount: true, type: true, createdAt: true, occurrenceDate: true, accountId: true },
+    select: {
+      amount: true,
+      type: true,
+      createdAt: true,
+      occurrenceDate: true,
+      recurringId: true,
+      materializedAt: true,
+      materializedAtEstimated: true,
+      accountId: true,
+    },
     orderBy: { createdAt: "asc" },
   });
 
   const byKey = new Map<string, number>();
 
   for (const tx of transactions) {
+    // materializedAt is both the durable generated-row marker and, for new
+    // rows, the exact balance-change instant. It remains populated when rule
+    // deletion nulls recurringId.
+    //
+    // Linked rows predating the migration carry an explicitly estimated
+    // timestamp. When the estimate differs from occurrenceDate, it came from
+    // the later rule-creation bound and can still prove an immediate backfill
+    // happened after the baseline. Otherwise the exact failed-run/catch-up
+    // instant is irretrievable, so retain the like-for-like business-day
+    // fallback rather than pretending the estimate is exact.
+    const isGenerated = tx.materializedAt !== null || tx.recurringId !== null;
+    if (floor && firstSnapshot && isGenerated) {
+      const hasUsefulPostingBound =
+        tx.materializedAt !== null &&
+        (!tx.materializedAtEstimated ||
+          tx.occurrenceDate === null ||
+          tx.materializedAt.getTime() !== tx.occurrenceDate.getTime());
+      const isAfterBaseline = hasUsefulPostingBound
+        ? tx.materializedAt!.getTime() > floor.getTime()
+        : (tx.occurrenceDate ?? tx.createdAt).getTime() > firstSnapshot.date.getTime();
+      if (!isAfterBaseline) continue;
+    }
+
     // Bucket by when the cash flow actually happened (occurrenceDate), falling
     // back to createdAt for legacy rows that never recorded one (#498).
     const monthKey = (tx.occurrenceDate ?? tx.createdAt).toISOString().slice(0, 7);
