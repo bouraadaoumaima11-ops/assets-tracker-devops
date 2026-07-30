@@ -1,10 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { gzipSync, gunzipSync } from "node:zlib";
 
 const h = vi.hoisted(() => {
   const makeTx = () => ({
     account: { deleteMany: vi.fn(), create: vi.fn(async () => ({ id: "new_account_1" })) },
+    cashTransaction: { createMany: vi.fn() },
+    holding: { create: vi.fn() },
+    holdingTransaction: { createMany: vi.fn() },
     netWorthSnapshot: { deleteMany: vi.fn(), createMany: vi.fn() },
     goal: { deleteMany: vi.fn(), createMany: vi.fn() },
+    recurringCashTransaction: { create: vi.fn() },
+    recurringInvestment: { create: vi.fn() },
     stockWatchItem: { deleteMany: vi.fn(), createMany: vi.fn() },
     calendarEntry: { deleteMany: vi.fn(), createMany: vi.fn() },
     setting: { upsert: vi.fn() },
@@ -81,14 +87,14 @@ const exportedCalendarFixture = {
   updatedAt: "2026-07-24T02:00:00.000Z",
 };
 
-const exportedUserFixture = {
+let exportedUserFixture = {
   id: "user_1",
   name: "Unit Test User",
   email: "unit@example.com",
   emailVerified: null,
   image: null,
   appSettings: null,
-  appAccounts: [],
+  appAccounts: [] as unknown[],
   snapshots: [],
   goals: [],
   stockWatchItems: [],
@@ -121,19 +127,103 @@ async function importBackup(body: unknown) {
   );
 }
 
+async function exportedJson(response: Response) {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const text =
+    response.headers.get("content-encoding") === "gzip"
+      ? gunzipSync(bytes).toString("utf8")
+      : new TextDecoder().decode(bytes);
+  return { text, json: JSON.parse(text) };
+}
+
+function makeExportCompatibleAccount(accountNumber: number) {
+  return {
+    id: `account_${accountNumber}`,
+    userId: "user_1",
+    name: `Cash account ${accountNumber}`,
+    type: "ASSET" as const,
+    category: "BANK" as const,
+    currency: "USD",
+    cashBalance: "10000",
+    isActive: true,
+    isPinned: false,
+    sortOrder: accountNumber,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    holdings: [],
+    recurringCashTransactions: [],
+    recurringInvestments: [],
+    cashTransactions: Array.from({ length: 10_000 }, (_, transactionNumber) => ({
+      id: `cash_${accountNumber}_${transactionNumber}`,
+      accountId: `account_${accountNumber}`,
+      type: "DEPOSIT" as const,
+      amount: "1.00",
+      note: `Cash transaction ${transactionNumber}: ${"backup fixture ".repeat(8)}`,
+      createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      occurrenceDate: null,
+      recurringId: null,
+    })),
+  };
+}
+
 describe("Calendar whole-app backup", () => {
   beforeEach(() => {
     h.tx = h.makeTx();
     h.priceRefreshResult = undefined;
+    exportedUserFixture = {
+      id: "user_1",
+      name: "Unit Test User",
+      email: "unit@example.com",
+      emailVerified: null,
+      image: null,
+      appSettings: null,
+      appAccounts: [] as unknown[],
+      snapshots: [],
+      goals: [],
+      stockWatchItems: [],
+      calendarEntries: [calendarFixture],
+    };
     vi.clearAllMocks();
   });
 
   it("exports calendar entries in backup v1.4", async () => {
     const response = await GET(new Request("http://unit.test/api/settings/data"), undefined);
-    const json = await response.json();
+    const { json } = await exportedJson(response);
 
     expect(json.version).toBe("1.4");
     expect(json.calendarEntries).toEqual([exportedCalendarFixture]);
+  });
+
+  it("round-trips an export-compatible backup larger than 4 MiB through the compressed import workflow", async () => {
+    exportedUserFixture.appAccounts = [
+      makeExportCompatibleAccount(1),
+      makeExportCompatibleAccount(2),
+      makeExportCompatibleAccount(3),
+    ];
+
+    const exported = await GET(new Request("http://unit.test/api/settings/data"), undefined);
+    expect(exported.headers.get("content-encoding")).toBe("gzip");
+    const { text } = await exportedJson(exported);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(4 * 1024 * 1024);
+    const compressed = gzipSync(text);
+    expect(compressed.byteLength).toBeLessThanOrEqual(4 * 1024 * 1024);
+
+    const response = await POST(
+      new Request("http://unit.test/api/settings/data", {
+        method: "POST",
+        headers: { "content-type": "application/gzip" },
+        body: compressed,
+      }),
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenCalledTimes(3);
+    expect(h.tx.cashTransaction.createMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.arrayContaining([expect.objectContaining({ amount: "1.00" })]),
+      }),
+    );
   });
 
   it("replaces calendar entries inside the import transaction", async () => {

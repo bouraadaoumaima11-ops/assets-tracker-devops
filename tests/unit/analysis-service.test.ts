@@ -271,9 +271,9 @@ describe("buildCumulativeGrowth", () => {
 
 describe("aggregateCategoryHistory", () => {
   const accounts: AccountMeta[] = [
-    { id: "a1", name: "Brokerage", category: "INVESTMENT" },
-    { id: "a2", name: "Savings", category: "CASH" },
-    { id: "a3", name: "401k", category: "INVESTMENT" },
+    { id: "a1", name: "Brokerage", category: "INVESTMENT", type: "ASSET" },
+    { id: "a2", name: "Savings", category: "CASH", type: "ASSET" },
+    { id: "a3", name: "401k", category: "INVESTMENT", type: "ASSET" },
   ];
 
   it("sums account values per category, keeping the last snapshot of each month", () => {
@@ -292,7 +292,9 @@ describe("aggregateCategoryHistory", () => {
 });
 
 describe("computePerformanceAttribution", () => {
-  const accounts: AccountMeta[] = [{ id: "a1", name: "Brokerage", category: "INVESTMENT" }];
+  const accounts: AccountMeta[] = [
+    { id: "a1", name: "Brokerage", category: "INVESTMENT", type: "ASSET" },
+  ];
 
   it("splits totalDelta into cash contribution and market performance", () => {
     const snapshots: SnapshotBreakdown[] = [
@@ -311,6 +313,58 @@ describe("computePerformanceAttribution", () => {
     });
   });
 
+  it("uses net-worth-signed values for asset, loan, and credit-card attribution", () => {
+    const mixedAccounts: AccountMeta[] = [
+      { id: "asset", name: "Brokerage", category: "BROKERAGE", type: "ASSET" },
+      { id: "loan", name: "Car loan", category: "LOAN", type: "LIABILITY" },
+      {
+        id: "credit-card",
+        name: "Credit card",
+        category: "CREDIT_CARD",
+        type: "LIABILITY",
+      },
+    ];
+    const snapshots: SnapshotBreakdown[] = [
+      {
+        date: "2026-01-01",
+        accountValues: { asset: 1_000, loan: 10_000, "credit-card": 1_000 },
+      },
+      {
+        date: "2026-03-01",
+        accountValues: { asset: 1_500, loan: 15_000, "credit-card": 400 },
+      },
+    ];
+    const cashFlows: AccountMonthlyContribution[] = [
+      { accountId: "asset", monthKey: "2026-02", contributions: 200 },
+      { accountId: "loan", monthKey: "2026-02", contributions: -5_000 },
+      { accountId: "credit-card", monthKey: "2026-02", contributions: 600 },
+    ];
+
+    const items = computePerformanceAttribution(snapshots, mixedAccounts, cashFlows, "2026-01");
+
+    expect(items.find((item) => item.accountId === "asset")).toMatchObject({
+      startValue: 1_000,
+      endValue: 1_500,
+      totalDelta: 500,
+      cashContribution: 200,
+      marketPerformance: 300,
+    });
+    expect(items.find((item) => item.accountId === "loan")).toMatchObject({
+      startValue: -10_000,
+      endValue: -15_000,
+      totalDelta: -5_000,
+      cashContribution: -5_000,
+      marketPerformance: 0,
+    });
+    expect(items.find((item) => item.accountId === "credit-card")).toMatchObject({
+      startValue: -1_000,
+      endValue: -400,
+      totalDelta: 600,
+      cashContribution: 600,
+      marketPerformance: 0,
+    });
+  });
+
   it("returns [] when fewer than two snapshots", () => {
     expect(computePerformanceAttribution([], accounts, [], "2026-01")).toEqual([]);
   });
@@ -318,9 +372,9 @@ describe("computePerformanceAttribution", () => {
 
 describe("computeInvestmentReturn", () => {
   const accounts: AccountMeta[] = [
-    { id: "a1", name: "Brokerage", category: "BROKERAGE" },
-    { id: "a2", name: "Checking", category: "BANK" },
-    { id: "a3", name: "Cold Wallet", category: "CRYPTO_WALLET" },
+    { id: "a1", name: "Brokerage", category: "BROKERAGE", type: "ASSET" },
+    { id: "a2", name: "Checking", category: "BANK", type: "ASSET" },
+    { id: "a3", name: "Cold Wallet", category: "CRYPTO_WALLET", type: "ASSET" },
   ];
 
   it("computes Modified-Dietz return over investment accounts only", () => {
@@ -381,7 +435,9 @@ describe("computeInvestmentReturn", () => {
   });
 
   it("returns null when the user has no investment accounts", () => {
-    const bankOnly: AccountMeta[] = [{ id: "a2", name: "Checking", category: "BANK" }];
+    const bankOnly: AccountMeta[] = [
+      { id: "a2", name: "Checking", category: "BANK", type: "ASSET" },
+    ];
     const snapshots: SnapshotBreakdown[] = [
       { date: "2026-01-01", accountValues: { a2: 5000 } },
       { date: "2026-03-01", accountValues: { a2: 6000 } },
@@ -392,8 +448,8 @@ describe("computeInvestmentReturn", () => {
 
 describe("computeInvestmentReturnSeries", () => {
   const accounts: AccountMeta[] = [
-    { id: "a1", name: "Brokerage", category: "BROKERAGE" },
-    { id: "a2", name: "Checking", category: "BANK" },
+    { id: "a1", name: "Brokerage", category: "BROKERAGE", type: "ASSET" },
+    { id: "a2", name: "Checking", category: "BANK", type: "ASSET" },
   ];
 
   it("computes monthly Dietz returns and a chained cumulative index", () => {
@@ -525,7 +581,9 @@ describe("computeInvestmentReturnSeries", () => {
         "en-US",
       ),
     ).toEqual([]);
-    const bankOnly: AccountMeta[] = [{ id: "a2", name: "Checking", category: "BANK" }];
+    const bankOnly: AccountMeta[] = [
+      { id: "a2", name: "Checking", category: "BANK", type: "ASSET" },
+    ];
     const snaps: SnapshotBreakdown[] = [
       { date: "2026-01-31", accountValues: { a2: 500 } },
       { date: "2026-02-28", accountValues: { a2: 600 } },

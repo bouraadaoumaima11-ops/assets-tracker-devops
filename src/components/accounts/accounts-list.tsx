@@ -54,6 +54,7 @@ import { usePrivacyMode } from "@/components/layout/privacy-mode-context";
 import { useDensity } from "@/components/layout/density-context";
 import { AccountsOnboarding } from "./accounts-onboarding";
 import type { SerializedAccountWithHoldings } from "@/lib/types";
+import type { AccountPriceMap } from "@/lib/services/account-service";
 
 const AccountForm = dynamic(() => import("./account-form").then((m) => m.AccountForm));
 const QuickAddHolding = dynamic(() => import("./quick-add-holding").then((m) => m.QuickAddHolding));
@@ -137,13 +138,17 @@ type ReorderDraftAccount = {
 
 function getAccountValue(
   account: SerializedAccountWithHoldings,
-  priceMap: Record<string, number>,
+  priceMap: AccountPriceMap,
   ratesMap: Record<string, number>,
 ): number {
   const holdingsValue = account.holdings.reduce((sum, h) => {
-    const price = (priceMap || {})[h.symbol] ?? 0;
-    const hc = h.currency || "USD";
-    const rate = hc === account.currency ? 1 : (ratesMap[`${hc}_${account.currency}`] ?? 1);
+    const quote = (priceMap || {})[h.symbol];
+    const price = quote?.price ?? 0;
+    const quoteCurrency = quote?.currency || h.currency || "USD";
+    const rate =
+      quoteCurrency === account.currency
+        ? 1
+        : (ratesMap[`${quoteCurrency}_${account.currency}`] ?? 1);
     const multiplier = h.assetType === "OPTION" ? (h.contractMultiplier ?? 100) : 1;
     return sum + price * h.quantity * multiplier * rate;
   }, 0);
@@ -190,7 +195,7 @@ export function AccountsList({
 }: {
   accounts: SerializedAccountWithHoldings[];
   archivedAccounts: SerializedAccountWithHoldings[];
-  priceMap: Record<string, number>;
+  priceMap: AccountPriceMap;
   ratesMap?: Record<string, number>;
   baseCurrency?: string;
   /** Optional overview block (e.g. portfolio composition) rendered before the
@@ -993,7 +998,7 @@ function DesktopAccountRow({
   account: SerializedAccountWithHoldings;
   baseValue: number;
   baseCurrency: string;
-  priceMap: Record<string, number>;
+  priceMap: AccountPriceMap;
   ratesMap: Record<string, number>;
   onNavigate: () => void;
   onDelete: (id: string) => void;
@@ -1160,7 +1165,7 @@ function MobileAccountRow({
 }: {
   account: SerializedAccountWithHoldings;
   index: number;
-  priceMap: Record<string, number>;
+  priceMap: AccountPriceMap;
   ratesMap: Record<string, number>;
   baseCurrency: string;
   onDelete: (id: string) => void;

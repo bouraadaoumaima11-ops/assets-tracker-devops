@@ -84,9 +84,9 @@ async function AccountsContent() {
       fillRate(account.currency, baseCurrency);
     }
     for (const holding of account.holdings) {
-      const hc = holding.currency || "USD";
-      if (hc !== account.currency) {
-        fillRate(hc, account.currency);
+      const quoteCurrency = priceMap[holding.symbol]?.currency || holding.currency || "USD";
+      if (quoteCurrency !== account.currency) {
+        fillRate(quoteCurrency, account.currency);
       }
     }
   }
