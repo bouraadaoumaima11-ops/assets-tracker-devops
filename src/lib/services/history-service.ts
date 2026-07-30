@@ -370,6 +370,7 @@ export interface AccountMeta {
   id: string;
   name: string;
   category: string;
+  type: "ASSET" | "LIABILITY";
 }
 
 export interface RawHistoryData {
@@ -399,7 +400,7 @@ export async function getRawHistoryWithBreakdown(
     }),
     prisma.account.findMany({
       where: { userId },
-      select: { id: true, name: true, category: true },
+      select: { id: true, name: true, category: true, type: true },
     }),
     getAllExchangeRates(),
   ]);
@@ -436,12 +437,11 @@ export async function getRawHistoryWithBreakdown(
       return { date, accountValues };
     });
 
-  const accounts: AccountMeta[] = (
-    accountsRaw as { id: string; name: string; category: string }[]
-  ).map((a) => ({
+  const accounts: AccountMeta[] = accountsRaw.map((a) => ({
     id: a.id,
     name: a.name,
     category: a.category,
+    type: a.type,
   }));
 
   return { snapshots, accounts };
@@ -452,7 +452,7 @@ export interface AccountMonthlyContribution {
   accountId: string;
   /** "YYYY-MM" */
   monthKey: string;
-  /** Net DEPOSIT − WITHDRAWAL in baseCurrency. */
+  /** Net-worth impact in baseCurrency (liability balance changes are inverted). */
   contributions: number;
 }
 
@@ -471,7 +471,10 @@ export async function getAccountMonthlyCashFlow(
   cacheLife("hours");
 
   const [accounts, allRatesMap, firstSnapshot] = await Promise.all([
-    prisma.account.findMany({ where: { userId }, select: { id: true, currency: true } }),
+    prisma.account.findMany({
+      where: { userId },
+      select: { id: true, currency: true, type: true },
+    }),
     getAllExchangeRates(),
     prisma.netWorthSnapshot.findFirst({
       where: { userId },
@@ -480,7 +483,9 @@ export async function getAccountMonthlyCashFlow(
     }),
   ]);
 
-  const accountCurrencyMap = new Map(accounts.map((a) => [a.id, a.currency]));
+  const accountMetaMap = new Map(
+    accounts.map((account) => [account.id, { currency: account.currency, type: account.type }]),
+  );
 
   // #509 — floor the transaction scan to the user's earliest snapshot instant,
   // exclusive. The first analysis bucket uses its own first snapshot as the
@@ -579,10 +584,12 @@ export async function getAccountMonthlyCashFlow(
     // back to createdAt for legacy rows that never recorded one (#498).
     const monthKey = (tx.occurrenceDate ?? tx.createdAt).toISOString().slice(0, 7);
     const key = `${tx.accountId}::${monthKey}`;
-    const currency = accountCurrencyMap.get(tx.accountId) ?? "USD";
+    const account = accountMetaMap.get(tx.accountId);
+    const currency = account?.currency ?? "USD";
     const rate = resolveRate(allRatesMap, currency, baseCurrency) ?? 1;
     const amount = Number(tx.amount) * rate;
-    const signed = tx.type === "DEPOSIT" ? amount : -amount;
+    const balanceDelta = tx.type === "DEPOSIT" ? amount : -amount;
+    const signed = account?.type === "LIABILITY" ? -balanceDelta : balanceDelta;
     byKey.set(key, (byKey.get(key) ?? 0) + signed);
   }
 

@@ -424,6 +424,30 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
     expect(result).toEqual([{ accountId: "acc", monthKey: "2026-06", contributions: 60 }]);
   });
 
+  it("uses each account's net-worth direction for asset, loan, and credit-card cash flows", async () => {
+    h.accounts = [
+      account({ id: "asset", type: "ASSET", category: "BANK" }),
+      account({ id: "loan", type: "LIABILITY", category: "LOAN" }),
+      account({ id: "credit-card", type: "LIABILITY", category: "CREDIT_CARD" }),
+    ];
+    h.cashTransactions = [
+      cashTx({ accountId: "asset", amount: 100, type: "DEPOSIT" }),
+      cashTx({ accountId: "asset", amount: 25, type: "WITHDRAWAL" }),
+      cashTx({ accountId: "loan", amount: 100, type: "DEPOSIT" }),
+      cashTx({ accountId: "loan", amount: 25, type: "WITHDRAWAL" }),
+      cashTx({ accountId: "credit-card", amount: 40, type: "DEPOSIT" }),
+      cashTx({ accountId: "credit-card", amount: 10, type: "WITHDRAWAL" }),
+    ];
+
+    const result = await getAccountMonthlyCashFlow("u1", "USD");
+
+    expect(result).toEqual([
+      { accountId: "asset", monthKey: "2026-07", contributions: 75 },
+      { accountId: "credit-card", monthKey: "2026-07", contributions: -30 },
+      { accountId: "loan", monthKey: "2026-07", contributions: -75 },
+    ]);
+  });
+
   it("floors the effective date to the first snapshot instant, exclusive (#509)", async () => {
     h.accounts = [account()];
     h.latestSnapshot = row({

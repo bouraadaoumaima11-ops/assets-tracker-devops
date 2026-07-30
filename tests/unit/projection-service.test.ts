@@ -13,9 +13,15 @@ interface SnapshotFixture {
   label: string | null;
   note: string | null;
 }
+interface CashTransactionFixture {
+  amount: number;
+  type: "DEPOSIT" | "WITHDRAWAL";
+  accountId: string;
+}
 const h = vi.hoisted(() => ({
   snapshots: [] as SnapshotFixture[],
   accounts: [] as { id: string; currency: string; type: "ASSET" | "LIABILITY" }[],
+  cashTransactions: [] as CashTransactionFixture[],
   rates: new Map<string, number>(),
 }));
 
@@ -42,7 +48,7 @@ vi.mock("@/lib/prisma", () => ({
       ),
     },
     account: { findMany: vi.fn(async () => h.accounts) },
-    cashTransaction: { findMany: vi.fn(async () => []) },
+    cashTransaction: { findMany: vi.fn(async () => h.cashTransactions) },
   },
 }));
 // Keep resolveRate real (identity path returns 1 for same-currency); only stub
@@ -58,6 +64,7 @@ describe("getProjectionData annual bucketing", () => {
   beforeEach(() => {
     h.snapshots = [];
     h.accounts = [];
+    h.cashTransactions = [];
     h.rates = new Map<string, number>();
   });
 
@@ -191,5 +198,39 @@ describe("getProjectionData annual bucketing", () => {
 
     expect(result.latestNetWorth).toBe(200);
     expect(result.annualSnapshots).toEqual([{ year: 2026, netWorth: 200 }]);
+  });
+
+  it("uses asset, loan, and credit-card directions for trailing savings", async () => {
+    h.snapshots = [
+      {
+        id: "latest",
+        date: new Date("2026-03-01T00:00:00.000Z"),
+        createdAt: new Date("2026-03-01T12:00:00.000Z"),
+        netWorth: 1_000,
+        totalAssets: 1_000,
+        totalLiabilities: 0,
+        baseCurrency: "USD",
+        breakdown: null,
+        label: null,
+        note: null,
+      },
+    ];
+    h.accounts = [
+      { id: "asset", currency: "USD", type: "ASSET" },
+      { id: "loan", currency: "USD", type: "LIABILITY" },
+      { id: "credit-card", currency: "USD", type: "LIABILITY" },
+    ];
+    h.cashTransactions = [
+      { accountId: "asset", amount: 100, type: "DEPOSIT" },
+      { accountId: "asset", amount: 20, type: "WITHDRAWAL" },
+      { accountId: "loan", amount: 200, type: "DEPOSIT" },
+      { accountId: "loan", amount: 50, type: "WITHDRAWAL" },
+      { accountId: "credit-card", amount: 40, type: "DEPOSIT" },
+      { accountId: "credit-card", amount: 10, type: "WITHDRAWAL" },
+    ];
+
+    const result = await getProjectionData("u1", "USD");
+
+    expect(result.trailing12mSavings).toBe(-100);
   });
 });

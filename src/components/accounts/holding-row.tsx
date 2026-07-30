@@ -20,6 +20,7 @@ const HIDDEN = "***";
 
 export interface HoldingWithPrice extends SerializedHolding {
   currentPrice: number | null;
+  currentPriceCurrency: string | null;
   marketValue: number | null;
 }
 
@@ -87,7 +88,7 @@ export function HoldingRow({
           {isOption && <span className="ml-1">contracts</span>}
           {!privacyMode && h.currentPrice !== null && (
             <span className="ml-2">
-              @ {formatCurrency(h.currentPrice, h.currency || "USD")}
+              @ {formatCurrency(h.currentPrice, h.currentPriceCurrency || h.currency || "USD")}
               {isOption && <span>/share</span>}
             </span>
           )}
