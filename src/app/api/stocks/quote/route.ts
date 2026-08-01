@@ -3,20 +3,24 @@ import { ok, failure } from "@/lib/api-responses";
 import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
 import { fetchEquityQuote, warmStockPrice } from "@/lib/services/stock-watch-service";
 
-export const GET = withAuth(async (request) => {
-  const limited = rateLimitCheckWithPrune(request, { limit: 60, prefix: "stocks-quote" });
-  if (limited) return limited;
+export const GET = withAuth(
+  async (request, _ctx, _userId, principal) => {
+    const limited = rateLimitCheckWithPrune(request, { limit: 60, prefix: "stocks-quote" });
+    if (limited) return limited;
 
-  const { searchParams } = new URL(request.url);
-  const symbol = searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol) return failure("Symbol is required");
+    const { searchParams } = new URL(request.url);
+    const symbol = searchParams.get("symbol")?.trim().toUpperCase();
+    if (!symbol) return failure("Symbol is required");
+    const marketLogOptions = { redactIdentifiers: principal.kind === "demo" };
 
-  const quote = await fetchEquityQuote(symbol);
-  if (!quote) return failure("Only stock symbols can be tracked.", 400);
-  const cached = await warmStockPrice(symbol);
+    const quote = await fetchEquityQuote(symbol, marketLogOptions);
+    if (!quote) return failure("Only stock symbols can be tracked.", 400);
+    const cached = await warmStockPrice(symbol, marketLogOptions);
 
-  return ok({
-    ...quote,
-    updatedAt: cached?.updatedAt ?? new Date().toISOString(),
-  });
-});
+    return ok({
+      ...quote,
+      updatedAt: cached?.updatedAt ?? new Date().toISOString(),
+    });
+  },
+  { demo: "allow" },
+);

@@ -4,11 +4,16 @@ import { prisma } from "@/lib/prisma";
 import {
   normalizeMinorCurrencyQuote,
   refreshPricesForStockSymbols,
+  type RefreshPricesOptions,
 } from "@/lib/services/price-service";
 import { getYahooClient } from "@/lib/services/yahoo-client";
 import { PRICE_REFRESH_TTL_MS } from "@/lib/refresh-policy";
 import { log } from "@/lib/logger";
 import type { StockWatchItem } from "@/generated/prisma/client";
+import type { AuthPrincipal } from "@/lib/auth-principal";
+import { invalidateScopedTag } from "@/lib/demo/demo-cache";
+
+type MarketLogOptions = { redactIdentifiers?: boolean };
 
 export type SerializedStockWatchItem = {
   id: string;
@@ -111,13 +116,18 @@ export async function getCachedTrackedStocks(userId: string): Promise<Serialized
   );
 }
 
-export function invalidateStockWatchCaches(userId: string) {
-  revalidateTag("stocks", { expire: 0 });
-  revalidateTag(`stocks:${userId}`, { expire: 0 });
-  revalidateTag("prices", "max");
+export function invalidateStockWatchCaches(userId: string, principal: AuthPrincipal) {
+  invalidateScopedTag({
+    globalTag: "stocks",
+    userTag: `stocks:${userId}`,
+    principal,
+  });
 }
 
-export async function fetchEquityQuote(symbol: string): Promise<{
+export async function fetchEquityQuote(
+  symbol: string,
+  options: MarketLogOptions = {},
+): Promise<{
   symbol: string;
   name: string;
   exchange: string;
@@ -125,8 +135,14 @@ export async function fetchEquityQuote(symbol: string): Promise<{
   price: number;
 } | null> {
   const normalized = symbol.toUpperCase();
-  const yahooFinance = await getYahooClient();
-  const quote = await yahooFinance.quote(normalized);
+  let quote;
+  try {
+    const yahooFinance = await getYahooClient();
+    quote = await yahooFinance.quote(normalized);
+  } catch (error) {
+    if (options.redactIdentifiers) throw new Error("Market quote lookup failed");
+    throw error;
+  }
 
   if (Array.isArray(quote) || quote.quoteType !== "EQUITY" || !quote.regularMarketPrice) {
     return null;
@@ -149,7 +165,10 @@ export async function fetchEquityQuote(symbol: string): Promise<{
   };
 }
 
-export async function warmStockPrice(symbol: string): Promise<{
+export async function warmStockPrice(
+  symbol: string,
+  options: MarketLogOptions = {},
+): Promise<{
   price: number;
   currency: string;
   updatedAt: string;
@@ -170,7 +189,7 @@ export async function warmStockPrice(symbol: string): Promise<{
     };
   }
 
-  const quote = await fetchEquityQuote(normalized);
+  const quote = await fetchEquityQuote(normalized, options);
   const result = quote ? { price: quote.price, currency: quote.currency } : null;
   if (!result) return null;
 
@@ -189,23 +208,34 @@ export async function warmStockPrice(symbol: string): Promise<{
   };
 }
 
-export async function refreshTrackedStockPrices(userId: string) {
+export async function refreshTrackedStockPrices(
+  userId: string,
+  options: RefreshPricesOptions = {},
+) {
   const stocks = await prisma.stockWatchItem.findMany({
     where: { userId },
     select: { symbol: true },
     distinct: ["symbol"],
   });
-  const result = await refreshPricesForStockSymbols(stocks.map((stock) => stock.symbol));
-  // Skip the cache bust when nothing changed (e.g. everything was fresh).
-  if (result.changed > 0) invalidateStockWatchCaches(userId);
-  return result;
+  return refreshPricesForStockSymbols(
+    stocks.map((stock) => stock.symbol),
+    options,
+  );
 }
 
-export async function tryWarmStockPrice(symbol: string) {
+export async function tryWarmStockPrice(symbol: string, options: MarketLogOptions = {}) {
   try {
-    return await warmStockPrice(symbol);
+    return await warmStockPrice(symbol, options);
   } catch (error) {
-    log.warn("stocks.price_warm.failed", { symbol, error: String(error) });
+    log.warn(
+      "stocks.price_warm.failed",
+      options.redactIdentifiers
+        ? {
+            operation: "warm-stock-price",
+            errorType: error instanceof Error ? error.name : "unknown",
+          }
+        : { symbol, error: String(error) },
+    );
     return null;
   }
 }
