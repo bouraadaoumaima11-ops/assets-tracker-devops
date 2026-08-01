@@ -256,7 +256,7 @@ export function instantiateDemoFixture(
         if (!remapped) {
           throw new TypeError("Demo fixture snapshot has an invalid account breakdown key");
         }
-        return [remapped, entry];
+        return [remapped, structuredClone(entry)];
       }),
     );
   };

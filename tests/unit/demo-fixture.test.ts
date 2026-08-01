@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { describe, expect, it } from "vitest";
 
 import { instantiateDemoFixture, shiftDemoFixtureDates } from "@/lib/demo/demo-fixture";
+import { getPreparedDemoFixture } from "@/lib/demo/demo-fixture-source";
 import { dataImportSchema } from "@/lib/validators";
 
 const source = dataImportSchema.parse(
@@ -89,6 +90,31 @@ describe("public Demo fixture", () => {
         makeId: sequentialIds(),
       }),
     ).toThrow(/invalid recurringId/);
+  });
+
+  it("isolates nested snapshot breakdown entries across cached workspaces", () => {
+    const first = getPreparedDemoFixture({
+      userId: "demo-user-one",
+      locale: "en-US",
+      now: today,
+      makeId: sequentialIds(),
+    });
+    const firstBreakdown = first.snapshots[0].breakdown as Record<string, { value: number }>;
+    const firstAccountId = first.accounts[0].id;
+    if (!firstAccountId) throw new Error("Prepared fixture account requires an id");
+    firstBreakdown[firstAccountId].value = -1;
+
+    const second = getPreparedDemoFixture({
+      userId: "demo-user-two",
+      locale: "en-US",
+      now: today,
+      makeId: sequentialIds(),
+    });
+    const secondBreakdown = second.snapshots[0].breakdown as Record<string, { value: number }>;
+    const secondAccountId = second.accounts[0].id;
+    if (!secondAccountId) throw new Error("Prepared fixture account requires an id");
+
+    expect(secondBreakdown[secondAccountId].value).toBe(350000);
   });
 
   it("prepares 100 independent copies with p95 below 100ms", () => {
