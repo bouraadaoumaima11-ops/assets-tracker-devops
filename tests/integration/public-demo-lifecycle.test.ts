@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
@@ -27,8 +27,34 @@ process.env.PUBLIC_DEMO_ENABLED = "true";
 
 const servicePool = new pg.Pool({ connectionString: DATABASE_URL, max: 12 });
 const setupPool = new pg.Pool({ connectionString: DATABASE_URL, max: 4 });
-const servicePrisma = new PrismaClient({ adapter: new PrismaPg(servicePool) });
+const servicePrisma = new PrismaClient({
+  adapter: new PrismaPg(servicePool),
+  log: [{ emit: "event", level: "query" }],
+});
+const statements: string[] = [];
+servicePrisma.$on("query", (event) => statements.push(event.query));
 const prisma = new PrismaClient({ adapter: new PrismaPg(setupPool) });
+
+const fixtureTables = new Set([
+  "Setting",
+  "Account",
+  "Holding",
+  "HoldingTransaction",
+  "CashTransaction",
+  "RecurringCashTransaction",
+  "RecurringInvestment",
+  "NetWorthSnapshot",
+  "Goal",
+  "StockWatchItem",
+  "CalendarEntry",
+  "PriceCache",
+  "ExchangeRate",
+]);
+
+const fixtureStatementGroups = () =>
+  statements.filter((query) =>
+    fixtureTables.has(/^\s*INSERT INTO\s+(?:"public"\.)?"([^"]+)"/i.exec(query)?.[1] ?? ""),
+  ).length;
 
 let ensureDemoWorkspace: typeof import("@/lib/demo/demo-service").ensureDemoWorkspace;
 let authenticateDemoTicket: typeof import("@/lib/demo/demo-service").authenticateDemoTicket;
@@ -127,6 +153,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await dropRejectAccountTrigger();
   await deleteTaskUsers();
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -140,6 +167,71 @@ afterAll(async () => {
 });
 
 describe("public Demo lifecycle", () => {
+  it("creates and resets the fixture within statement and network budgets", async () => {
+    statements.length = 0;
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Public Demo fixture attempted a network request"));
+
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "statement-budget-visitor",
+      clientIp: "198.51.100.1",
+      locale: "en-US",
+      now,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const createGroups = fixtureStatementGroups();
+    expect(createGroups).toBeLessThanOrEqual(15);
+
+    statements.length = 0;
+    await resetDemoWorkspace({
+      userId: workspace.userId,
+      locale: "zh-TW",
+      now: new Date(now.getTime() + 1_000),
+    });
+    const resetGroups = fixtureStatementGroups();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(resetGroups).toBeLessThanOrEqual(15);
+    process.stdout.write(
+      `[public-demo-budget] create-statement-groups=${createGroups} reset-statement-groups=${resetGroups} external-fetches=0\n`,
+    );
+  });
+
+  it("creates ten distinct visitor workspaces concurrently and reports p95", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockRejectedValue(new Error("Public Demo fixture attempted a network request"));
+    await ensureDemoWorkspace({
+      visitorToken: "performance-warmup-visitor",
+      clientIp: "198.51.100.10",
+      locale: "en-US",
+      now,
+    });
+
+    const samples = await Promise.all(
+      Array.from({ length: 10 }, async (_, index) => {
+        const startedAt = performance.now();
+        const workspace = await ensureDemoWorkspace({
+          visitorToken: `performance-visitor-${index}`,
+          clientIp: `198.51.100.${100 + index}`,
+          locale: index % 2 === 0 ? "en-US" : "zh-TW",
+          now,
+        });
+        return { durationMs: performance.now() - startedAt, resumed: workspace.resumed };
+      }),
+    );
+    const durations = samples.map(({ durationMs }) => durationMs).sort((a, b) => a - b);
+    const p95 = durations[Math.ceil(durations.length * 0.95) - 1];
+    process.stdout.write(
+      `[public-demo-performance] concurrent-create p95=${p95.toFixed(0)}ms samples=${durations.length}\n`,
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(samples.every(({ resumed }) => !resumed)).toBe(true);
+    expect(await prisma.demoWorkspace.count()).toBe(11);
+  });
+
   it("gives two visitors different users and data ownership", async () => {
     const first = await ensureDemoWorkspace({
       visitorToken: "visitor-a",

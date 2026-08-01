@@ -1299,7 +1299,9 @@
     "section7Body": "We use Vercel Analytics and Speed Insights to understand basic usage and page performance. These tools do not include your manually entered account names, holdings, balances, or transaction notes.",
     "section8Title": "Contact",
     "section8Body": "For privacy or data requests, email us at",
-    "lastUpdated": "Last updated: April 2026"
+    "section9Title": "Public Demo data",
+    "section9Body": "The public Demo uses the essential HttpOnly asset-tracker-demo-visitor cookie to resume your temporary workspace. A purpose-separated pseudonymous source hash is used only for abuse and capacity control; this feature does not store raw IP addresses. Demo access expires after 24 hours, and its synthetic data is targeted for physical deletion within the following 24 hours. Outages may delay physical deletion, but access remains blocked after expiry. Changes made in the Demo never transfer to a formal account.",
+    "lastUpdated": "Last updated: August 2026"
   },
   "terms": {
     "title": "Terms of Service",

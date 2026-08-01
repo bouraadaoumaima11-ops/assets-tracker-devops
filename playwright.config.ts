@@ -2,6 +2,8 @@ import { defineConfig, devices } from "@playwright/test";
 
 const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL ?? "http://localhost:3000";
 const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "e2e-smoke-test";
+const ENABLE_PUBLIC_DEMO_PROJECTS =
+  !process.env.PLAYWRIGHT_TEST_BASE_URL || process.env.E2E_PUBLIC_DEMO === "1";
 
 export default defineConfig({
   globalSetup: "./tests/e2e/global-setup",
@@ -27,6 +29,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: /public-demo\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         storageState: "tests/e2e/.auth/user.json",
@@ -34,11 +37,36 @@ export default defineConfig({
     },
     {
       name: "Mobile Chrome",
+      testIgnore: /public-demo\.spec\.ts/,
       use: {
         ...devices["Pixel 7"],
         storageState: "tests/e2e/.auth/user.json",
       },
     },
+    ...(ENABLE_PUBLIC_DEMO_PROJECTS
+      ? [
+          {
+            name: "Public Demo Desktop",
+            testMatch: /public-demo\.spec\.ts/,
+            use: {
+              ...devices["Desktop Chrome"],
+              storageState: { cookies: [], origins: [] },
+              locale: "en-US",
+              extraHTTPHeaders: { "x-forwarded-for": "198.51.100.101" },
+            },
+          },
+          {
+            name: "Public Demo Mobile zh-TW",
+            testMatch: /public-demo\.spec\.ts/,
+            use: {
+              ...devices["Pixel 7"],
+              storageState: { cookies: [], origins: [] },
+              locale: "zh-TW",
+              extraHTTPHeaders: { "x-forwarded-for": "198.51.100.102" },
+            },
+          },
+        ]
+      : []),
   ],
   ...(process.env.PLAYWRIGHT_TEST_BASE_URL
     ? {}
@@ -51,6 +79,7 @@ export default defineConfig({
             VERCEL_ENV: "preview",
             PREVIEW_AUTH_ENABLED: "true",
             PREVIEW_AUTH_PASSWORD: E2E_PASSWORD,
+            PUBLIC_DEMO_ENABLED: "true",
             // Deterministic offline Yahoo stub (see yahoo-client.ts) — the
             // smoke suite must not depend on Yahoo's rate limiter.
             E2E_YAHOO_STUB: "1",

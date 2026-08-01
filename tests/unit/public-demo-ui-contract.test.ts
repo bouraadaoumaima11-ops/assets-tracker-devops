@@ -131,4 +131,26 @@ describe("public Demo shell contract", () => {
       expect(zh.demo[key]).toBeDefined();
     }
   });
+
+  it("discloses the temporary public Demo lifecycle in both privacy locales", () => {
+    const privacyPage = read("src/app/privacy/page.tsx");
+    const en = JSON.parse(read("messages/en-US.json")) as {
+      privacy: Record<string, string>;
+    };
+    const zh = JSON.parse(read("messages/zh-TW.json")) as typeof en;
+
+    expect(privacyPage).toContain('title: t("section9Title")');
+    expect(privacyPage).toContain('body: t("section9Body")');
+    expect(privacyPage).toContain("[...Array(9)]");
+    expect(en.privacy.section9Title).toBeDefined();
+    expect(en.privacy.section9Body).toContain("asset-tracker-demo-visitor");
+    expect(en.privacy.section9Body).toContain("24 hours");
+    expect(en.privacy.section9Body).toContain("raw IP");
+    expect(en.privacy.section9Body).toContain("formal account");
+    expect(zh.privacy.section9Title).toBeDefined();
+    expect(zh.privacy.section9Body).toContain("asset-tracker-demo-visitor");
+    expect(zh.privacy.section9Body).toContain("24 小時");
+    expect(zh.privacy.section9Body).toContain("原始 IP");
+    expect(zh.privacy.section9Body).toContain("正式帳號");
+  });
 });

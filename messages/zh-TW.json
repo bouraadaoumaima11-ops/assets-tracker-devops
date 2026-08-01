@@ -1299,7 +1299,9 @@
     "section7Body": "我們使用 Vercel Analytics 和 Speed Insights 了解基本使用情況與頁面效能。這些工具不包含您手動輸入的帳戶名稱、持倉、餘額或交易備註。",
     "section8Title": "聯絡方式",
     "section8Body": "如有隱私或資料請求，請寄信至",
-    "lastUpdated": "最後更新：2026 年 4 月"
+    "section9Title": "公開 Demo 資料",
+    "section9Body": "公開 Demo 使用必要的 HttpOnly asset-tracker-demo-visitor Cookie，讓您返回暫時工作區。系統僅為防止濫用及容量控制，另外產生用途分離的假名化來源雜湊；此功能不儲存原始 IP 位址。Demo 存取權會在 24 小時後到期，並以到期後 24 小時內實體刪除合成資料為目標。服務中斷可能延遲實體刪除，但到期後仍會封鎖存取。Demo 中的變更絕不會移轉至正式帳號。",
+    "lastUpdated": "最後更新：2026 年 8 月"
   },
   "terms": {
     "title": "服務條款",

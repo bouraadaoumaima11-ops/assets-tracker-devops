@@ -4,7 +4,9 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { INITIAL_DEMO_ACTION_STATE, startPublicDemoAction } from "@/app/demo/actions";
+import { startPublicDemoAction, type DemoActionState } from "@/app/demo/actions";
+
+const INITIAL_DEMO_ACTION_STATE: DemoActionState = { errorCode: null };
 
 export function DemoLoginButton({ variant = "start" }: { variant?: "start" | "restart" }) {
   const t = useTranslations("demo.login");

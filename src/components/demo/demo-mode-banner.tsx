@@ -7,9 +7,9 @@ import { useRouter } from "next/navigation";
 import { LogOut, RefreshCcw, UserRound } from "lucide-react";
 import { toast } from "sonner";
 import {
-  INITIAL_DEMO_RESET_ACTION_STATE,
   exitPublicDemoAction,
   resetPublicDemoAction,
+  type DemoResetActionState,
 } from "@/app/demo/actions";
 import { demoAnnouncementThreshold } from "@/lib/demo/demo-time";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,11 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+
+const INITIAL_DEMO_RESET_ACTION_STATE: DemoResetActionState = {
+  errorCode: null,
+  completedResets: 0,
+};
 
 function formatRemaining(locale: string, remainingMs: number) {
   const formatter = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
@@ -158,7 +163,9 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
           <div className="flex min-w-[24rem] gap-2">{actions()}</div>
         </div>
         <div className="md:hidden">
-          <p className="px-3 py-2 text-center text-xs font-semibold">{timeDetails}</p>
+          <p className="px-3 py-2 text-center text-xs font-semibold">
+            {t("banner.title")} · {timeDetails}
+          </p>
           <div className="grid grid-cols-3 gap-2 border-t border-amber-900/15 px-3 py-2">
             {actions()}
           </div>

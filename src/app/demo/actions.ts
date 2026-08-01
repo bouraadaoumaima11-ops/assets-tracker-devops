@@ -23,14 +23,7 @@ export type DemoActionState = {
   retryAfterSeconds?: number;
 };
 
-export const INITIAL_DEMO_ACTION_STATE: DemoActionState = { errorCode: null };
-
 export type DemoResetActionState = DemoActionState & { completedResets: number };
-
-export const INITIAL_DEMO_RESET_ACTION_STATE: DemoResetActionState = {
-  errorCode: null,
-  completedResets: 0,
-};
 
 export async function startPublicDemoAction(
   _previous: DemoActionState,
@@ -90,7 +83,7 @@ export async function startPublicDemoAction(
     AUTH_SECRET,
   );
   await signIn("public-demo", { ticket, visitorToken, redirectTo: "/" });
-  return INITIAL_DEMO_ACTION_STATE;
+  return { errorCode: null };
 }
 
 export async function exitPublicDemoAction() {
