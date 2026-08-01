@@ -1234,6 +1234,7 @@
     },
     "banner": {
       "title": "Demo mode",
+      "loading": "Loading Demo time…",
       "expiry": "Expires {expiry}",
       "remaining": "{duration} remaining",
       "actions": {

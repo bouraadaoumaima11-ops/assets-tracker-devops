@@ -182,7 +182,7 @@ const authMiddleware = auth((req) => {
     req.nextUrl.pathname === "/login" &&
     !isDemoUnavailable &&
     !isDemoFormalLoginHandoff &&
-    !(isStaleSessionRecovery && req.auth?.user?.isDemo !== true)
+    !isStaleSessionRecovery
   ) {
     const newUrl = new URL("/", req.nextUrl.origin);
     return Response.redirect(newUrl);

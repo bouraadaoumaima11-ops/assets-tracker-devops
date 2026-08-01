@@ -199,6 +199,21 @@ describe("public Demo proxy lifecycle", () => {
     }
   });
 
+  it("allows an otherwise active Demo JWT through stale-session recovery", () => {
+    const request = new NextRequest("https://astt.app/login?stale-session=1", {
+      headers: { cookie: "authjs.session-token=signed-session" },
+    });
+    Object.defineProperty(request, "auth", {
+      value: {
+        user: { id: "deleted-demo", isDemo: true, demoExpiresAt: "2099-01-01T00:00:00.000Z" },
+      },
+    });
+
+    const response = proxy(request, {} as NextFetchEvent) as Response;
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("does not apply Demo expiry fields to formal sessions", () => {
     const request = new NextRequest("https://astt.app/accounts", {
       headers: { cookie: "authjs.session-token=signed-session" },

@@ -36,7 +36,8 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
   const t = useTranslations("demo");
   const locale = useLocale();
   const router = useRouter();
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState<number | null>(null);
+  const [mounted, setMounted] = useState(false);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [resetState, resetAction, resetting] = useActionState(
@@ -46,19 +47,27 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
   const lastAnnouncedThreshold = useRef<string | null>(null);
   const completedResets = useRef(0);
   const expiryMs = Date.parse(expiresAt);
-  const remainingMs = Math.max(0, expiryMs - now);
-  const exactExpiry = new Intl.DateTimeFormat(locale, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(expiryMs));
+  const timeIsReady = mounted && now !== null;
+  const remainingMs = now === null ? null : Math.max(0, expiryMs - now);
+  const exactExpiry = timeIsReady
+    ? new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      }).format(new Date(expiryMs))
+    : null;
 
   useEffect(() => {
+    const initialFrame = window.requestAnimationFrame(() => {
+      setMounted(true);
+      setNow(Date.now());
+    });
     const interval = window.setInterval(() => setNow(Date.now()), 30_000);
     const expiryTimeout = window.setTimeout(
       () => setNow(Date.now()),
       Math.max(0, expiryMs - Date.now()),
     );
     return () => {
+      window.cancelAnimationFrame(initialFrame);
       window.clearInterval(interval);
       window.clearTimeout(expiryTimeout);
     };
@@ -69,12 +78,23 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
   }, [remainingMs, router]);
 
   useEffect(() => {
+    if (remainingMs === null) return;
     const threshold = demoAnnouncementThreshold(remainingMs);
     if (threshold && lastAnnouncedThreshold.current !== threshold) {
       lastAnnouncedThreshold.current = threshold;
       setAnnouncement(t(`banner.announcements.${threshold}`));
     }
   }, [remainingMs, t]);
+
+  const timeDetails =
+    mounted && now !== null && exactExpiry !== null ? (
+      <>
+        {t("banner.expiry", { expiry: exactExpiry })} ·{" "}
+        {t("banner.remaining", { duration: formatRemaining(locale, Math.max(0, expiryMs - now)) })}
+      </>
+    ) : (
+      t("banner.loading")
+    );
 
   useEffect(() => {
     if (resetState.errorCode === "DEMO_EXPIRED" || resetState.errorCode === "DEMO_DISABLED") {
@@ -133,16 +153,12 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
         </p>
         <div className="hidden min-h-12 items-center justify-between gap-4 px-4 py-2 md:flex">
           <p className="text-sm font-medium">
-            {t("banner.title")} · {t("banner.expiry", { expiry: exactExpiry })} ·{" "}
-            {t("banner.remaining", { duration: formatRemaining(locale, remainingMs) })}
+            {t("banner.title")} · {timeDetails}
           </p>
           <div className="flex min-w-[24rem] gap-2">{actions()}</div>
         </div>
         <div className="md:hidden">
-          <p className="px-3 py-2 text-center text-xs font-semibold">
-            {t("banner.expiry", { expiry: exactExpiry })} ·{" "}
-            {t("banner.remaining", { duration: formatRemaining(locale, remainingMs) })}
-          </p>
+          <p className="px-3 py-2 text-center text-xs font-semibold">{timeDetails}</p>
           <div className="grid grid-cols-3 gap-2 border-t border-amber-900/15 px-3 py-2">
             {actions()}
           </div>

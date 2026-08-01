@@ -19,6 +19,17 @@ describe("public Demo shell contract", () => {
     expect(source).toContain("router.refresh()");
   });
 
+  it("renders a deterministic placeholder before browser-local time is available", () => {
+    const source = read("src/components/demo/demo-mode-banner.tsx");
+
+    expect(source).toContain("useState<number | null>(null)");
+    expect(source).toContain("const [mounted, setMounted] = useState(false)");
+    expect(source).toContain("setNow(Date.now())");
+    expect(source).toContain("mounted && now !== null");
+    expect(source).toContain('t("banner.loading")');
+    expect(source).not.toContain("useState(() => Date.now())");
+  });
+
   it("provides each Demo shell message namespace in both locales", () => {
     const en = JSON.parse(read("messages/en-US.json")) as { demo: Record<string, unknown> };
     const zh = JSON.parse(read("messages/zh-TW.json")) as { demo: Record<string, unknown> };

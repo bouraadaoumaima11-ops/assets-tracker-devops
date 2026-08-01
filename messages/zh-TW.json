@@ -1234,6 +1234,7 @@
     },
     "banner": {
       "title": "Demo 模式",
+      "loading": "正在載入 Demo 時間…",
       "expiry": "到期時間：{expiry}",
       "remaining": "剩餘 {duration}",
       "actions": {
