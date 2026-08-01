@@ -284,6 +284,24 @@ describe("refreshAllPrices — cron-wide symbol collection", () => {
     expect(fetched.filter((symbol) => symbol === "AAPL")).toHaveLength(1);
   });
 
+  it("discovers symbols only through formal-user relations", async () => {
+    vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.stockWatchItem.findMany).mockResolvedValueOnce([] as never);
+
+    await refreshAllPrices();
+
+    expect(prisma.holding.findMany).toHaveBeenCalledWith({
+      where: { account: { user: { demoWorkspace: null } } },
+      select: { symbol: true, assetType: true },
+      distinct: ["symbol"],
+    });
+    expect(prisma.stockWatchItem.findMany).toHaveBeenCalledWith({
+      where: { user: { demoWorkspace: null } },
+      select: { symbol: true },
+      distinct: ["symbol"],
+    });
+  });
+
   it("treats unpriceable holdings as no due symbols", async () => {
     vi.mocked(prisma.holding.findMany).mockResolvedValueOnce([
       { symbol: "PRIVATE-LOAN", assetType: "OTHER" },

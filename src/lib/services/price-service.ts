@@ -490,10 +490,12 @@ export async function fetchCryptoPrices(
 export async function refreshAllPrices(): Promise<RefreshPricesResult> {
   const [holdings, trackedStocks] = await Promise.all([
     prisma.holding.findMany({
+      where: { account: { user: { demoWorkspace: null } } },
       select: { symbol: true, assetType: true },
       distinct: ["symbol"],
     }),
     prisma.stockWatchItem.findMany({
+      where: { user: { demoWorkspace: null } },
       select: { symbol: true },
       distinct: ["symbol"],
     }),
