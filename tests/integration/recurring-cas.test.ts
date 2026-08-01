@@ -9,9 +9,9 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is required for recurring CAS i
 const parsedDatabaseUrl = new URL(DATABASE_URL);
 if (
   !["localhost", "127.0.0.1"].includes(parsedDatabaseUrl.hostname) ||
-  !parsedDatabaseUrl.pathname.endsWith("_issue660_test")
+  !parsedDatabaseUrl.pathname.endsWith("_asset_tracker_test")
 ) {
-  throw new Error("Recurring CAS integration tests require a local *_issue660_test database");
+  throw new Error("Integration tests require a local *_asset_tracker_test database");
 }
 
 type AfterRead = () => Promise<void>;
