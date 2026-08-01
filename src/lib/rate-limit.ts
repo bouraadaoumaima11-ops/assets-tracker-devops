@@ -33,9 +33,9 @@ interface WindowEntry {
 // Module-level store — shared across warm invocations on the same instance.
 const store = new Map<string, WindowEntry>();
 
-/** Extract the best available IP from the request headers. */
-export function getClientIp(request: Request): string {
-  const xff = request.headers.get("x-forwarded-for");
+/** Extract the best available IP from trusted request headers. */
+export function getClientIpFromHeaders(headers: Headers): string {
+  const xff = headers.get("x-forwarded-for");
   if (xff) {
     const ip = xff
       .split(",")
@@ -44,13 +44,18 @@ export function getClientIp(request: Request): string {
     if (ip) return ip;
   }
 
-  const cfIp = request.headers.get("cf-connecting-ip")?.trim();
+  const cfIp = headers.get("cf-connecting-ip")?.trim();
   if (cfIp) return cfIp;
 
-  const realIp = request.headers.get("x-real-ip")?.trim();
+  const realIp = headers.get("x-real-ip")?.trim();
   if (realIp) return realIp;
 
   return "unknown";
+}
+
+/** Extract the best available IP from the request headers. */
+export function getClientIp(request: Request): string {
+  return getClientIpFromHeaders(request.headers);
 }
 
 /**

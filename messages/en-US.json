@@ -1204,12 +1204,34 @@
     "googleButton": "Continue with Google",
     "selfHostPasswordPlaceholder": "Self-host password",
     "selfHostButton": "Sign in",
+    "internalTestDivider": "Internal Test Login",
+    "internalTestButton": "Internal Test Login",
+    "internalTestPasswordPlaceholder": "Internal test password",
     "or": "or",
     "trust1": "Authentication stays under your deployment's control",
     "trust2": "Your data is private & never sold",
     "trust3": "Only you can see your portfolio",
     "footerBefore": "Your data stays private. Read our",
     "footerLink": "Privacy Policy"
+  },
+  "demo": {
+    "login": {
+      "button": "Try the Demo without signing in",
+      "restartButton": "Start a new Demo",
+      "description": "Create an isolated sample workspace that lasts 24 hours. No personal information required.",
+      "preparing": "Preparing sample data…",
+      "errors": {
+        "DEMO_RESTRICTED": "That action is not available in the Demo.",
+        "DEMO_QUOTA_EXHAUSTED": "This Demo has reached its activity limit.",
+        "DEMO_EXPIRED": "This Demo has expired. Start a new one to continue.",
+        "DEMO_RATE_LIMITED": "Too many Demo requests. Please wait and try again.",
+        "DEMO_SOURCE_LIMIT": "Too many active Demos were started from this network. Please try again later.",
+        "DEMO_AT_CAPACITY": "The Demo is currently at capacity. Please try again later.",
+        "DEMO_DISABLED": "The Demo is temporarily unavailable.",
+        "DEMO_INITIALIZATION_FAILED": "The Demo could not be prepared. Please try again.",
+        "DEMO_RESET_FAILED": "The Demo could not be reset. Please try again."
+      }
+    }
   },
   "privacy": {
     "title": "Privacy Policy",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getClientIp, rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { getClientIp, getClientIpFromHeaders, rateLimitCheckWithPrune } from "@/lib/rate-limit";
 
 function request(headers: HeadersInit): Request {
   return new Request("https://example.test", { headers });
@@ -32,6 +32,31 @@ describe("getClientIp", () => {
       ),
     ).toBe("198.51.100.11");
     expect(getClientIp(request({ "x-forwarded-for": " , " }))).toBe("unknown");
+  });
+
+  it("extracts the same trusted proxy hops directly from Server Action headers", () => {
+    expect(
+      getClientIpFromHeaders(
+        new Headers({
+          "x-forwarded-for": "198.51.100.9, 203.0.113.7",
+          "cf-connecting-ip": "198.51.100.11",
+          "x-real-ip": "198.51.100.12",
+        }),
+      ),
+    ).toBe("203.0.113.7");
+    expect(
+      getClientIpFromHeaders(
+        new Headers({
+          "x-forwarded-for": " , ",
+          "cf-connecting-ip": " 198.51.100.11 ",
+          "x-real-ip": "198.51.100.12",
+        }),
+      ),
+    ).toBe("198.51.100.11");
+    expect(getClientIpFromHeaders(new Headers({ "x-real-ip": " 198.51.100.12 " }))).toBe(
+      "198.51.100.12",
+    );
+    expect(getClientIpFromHeaders(new Headers())).toBe("unknown");
   });
 });
 
