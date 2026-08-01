@@ -4,7 +4,11 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
 import { createDemoLoginTicket, hashDemoVisitor } from "@/lib/demo/demo-crypto";
-import { DEMO_CAPACITY_LOCK_KEY, DEMO_LIFETIME_MS } from "@/lib/demo/demo-policy";
+import {
+  DEMO_CAPACITY_LOCK_KEY,
+  DEMO_LIFETIME_MS,
+  DEMO_REFRESH_WINDOW_MS,
+} from "@/lib/demo/demo-policy";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is required for public Demo integration tests");
@@ -30,6 +34,9 @@ let ensureDemoWorkspace: typeof import("@/lib/demo/demo-service").ensureDemoWork
 let authenticateDemoTicket: typeof import("@/lib/demo/demo-service").authenticateDemoTicket;
 let cleanupExpiredDemoUsers: typeof import("@/lib/demo/demo-service").cleanupExpiredDemoUsers;
 let deleteExpiredDemoUser: typeof import("@/lib/demo/demo-service").deleteExpiredDemoUser;
+let resetDemoWorkspace: typeof import("@/lib/demo/demo-service").resetDemoWorkspace;
+let consumeDemoMutationQuota: typeof import("@/lib/demo/demo-quota-service").consumeDemoMutationQuota;
+let consumeDemoRefreshQuota: typeof import("@/lib/demo/demo-quota-service").consumeDemoRefreshQuota;
 
 const now = new Date("2026-08-01T04:00:00.000Z");
 
@@ -101,8 +108,15 @@ async function waitForResumeDecisionOrAdvisoryWait(isSettled: () => boolean) {
 
 beforeAll(async () => {
   (globalThis as { prisma?: unknown }).prisma = servicePrisma;
-  ({ ensureDemoWorkspace, authenticateDemoTicket, cleanupExpiredDemoUsers, deleteExpiredDemoUser } =
-    await import("@/lib/demo/demo-service"));
+  ({
+    ensureDemoWorkspace,
+    authenticateDemoTicket,
+    cleanupExpiredDemoUsers,
+    deleteExpiredDemoUser,
+    resetDemoWorkspace,
+  } = await import("@/lib/demo/demo-service"));
+  ({ consumeDemoMutationQuota, consumeDemoRefreshQuota } =
+    await import("@/lib/demo/demo-quota-service"));
 });
 
 beforeEach(async () => {
@@ -346,6 +360,190 @@ describe("public Demo lifecycle", () => {
     });
 
     expect(workspace.expiresAt.getTime() - workspace.createdAt.getTime()).toBe(DEMO_LIFETIME_MS);
+  });
+
+  it("allows exactly 30 of 31 concurrent mutations in one minute", async () => {
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "mutation-window-visitor",
+      clientIp: "198.51.100.63",
+      locale: "en-US",
+      now,
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 31 }, () =>
+        consumeDemoMutationQuota(servicePrisma, workspace.userId, now, { reset: false }),
+      ),
+    );
+
+    expect(results.filter((result) => result.ok)).toHaveLength(30);
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, reason: "rate", retryAfterSeconds: 60 },
+    ]);
+    await expect(
+      prisma.demoWorkspace.findUniqueOrThrow({
+        where: { userId: workspace.userId },
+        select: { mutationCount: true, mutationWindowCount: true },
+      }),
+    ).resolves.toEqual({ mutationCount: 30, mutationWindowCount: 30 });
+  });
+
+  it("allows exactly one of two concurrent mutations at lifetime count 249", async () => {
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "mutation-lifetime-visitor",
+      clientIp: "198.51.100.64",
+      locale: "en-US",
+      now,
+    });
+    await prisma.demoWorkspace.update({
+      where: { userId: workspace.userId },
+      data: { mutationCount: 249 },
+    });
+
+    const results = await Promise.all([
+      consumeDemoMutationQuota(servicePrisma, workspace.userId, now, { reset: false }),
+      consumeDemoMutationQuota(servicePrisma, workspace.userId, now, { reset: false }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toEqual([{ ok: false, reason: "lifetime" }]);
+    await expect(
+      prisma.demoWorkspace.findUniqueOrThrow({
+        where: { userId: workspace.userId },
+        select: { mutationCount: true },
+      }),
+    ).resolves.toEqual({ mutationCount: 250 });
+  });
+
+  it("anchors three refreshes to the first request and renews exactly at ten minutes", async () => {
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "refresh-window-visitor",
+      clientIp: "198.51.100.65",
+      locale: "en-US",
+      now,
+    });
+
+    const successful = [
+      await consumeDemoRefreshQuota(servicePrisma, workspace.userId, now),
+      await consumeDemoRefreshQuota(
+        servicePrisma,
+        workspace.userId,
+        new Date(now.getTime() + 60_000),
+      ),
+      await consumeDemoRefreshQuota(
+        servicePrisma,
+        workspace.userId,
+        new Date(now.getTime() + 120_000),
+      ),
+    ];
+    const limitedAt = new Date(now.getTime() + 5 * 60_000);
+    const limited = await consumeDemoRefreshQuota(servicePrisma, workspace.userId, limitedAt);
+    const boundary = new Date(now.getTime() + DEMO_REFRESH_WINDOW_MS);
+    const renewed = await consumeDemoRefreshQuota(servicePrisma, workspace.userId, boundary);
+
+    expect(successful).toEqual(Array.from({ length: 3 }, () => ({ ok: true })));
+    expect(limited).toEqual({ ok: false, reason: "rate", retryAfterSeconds: 300 });
+    expect(renewed).toEqual({ ok: true });
+    await expect(
+      prisma.demoWorkspace.findUniqueOrThrow({
+        where: { userId: workspace.userId },
+        select: { refreshWindowStartedAt: true, refreshCount: true },
+      }),
+    ).resolves.toEqual({ refreshWindowStartedAt: boundary, refreshCount: 1 });
+  });
+
+  it("allows three atomic resets, preserves expiry and mutation usage, then exhausts resets", async () => {
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "reset-limit-visitor",
+      clientIp: "198.51.100.66",
+      locale: "en-US",
+      now,
+    });
+
+    await expect(
+      Promise.all(
+        Array.from({ length: 3 }, (_, index) =>
+          resetDemoWorkspace({
+            userId: workspace.userId,
+            locale: index % 2 === 0 ? "zh-TW" : "en-US",
+            now: new Date(now.getTime() + index),
+          }),
+        ),
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining(Array.from({ length: 3 }, () => ({ rowCount: expect.any(Number) }))),
+    );
+    await expect(
+      resetDemoWorkspace({
+        userId: workspace.userId,
+        locale: "en-US",
+        now: new Date(now.getTime() + 3),
+      }),
+    ).rejects.toMatchObject({ code: "DEMO_QUOTA_EXHAUSTED", status: 403 });
+
+    await expect(
+      prisma.demoWorkspace.findUniqueOrThrow({
+        where: { userId: workspace.userId },
+        select: { expiresAt: true, mutationCount: true, resetCount: true },
+      }),
+    ).resolves.toEqual({ expiresAt: workspace.expiresAt, mutationCount: 3, resetCount: 3 });
+  });
+
+  it("rolls back reset deletion and every counter when fixture insertion fails", async () => {
+    const workspace = await ensureDemoWorkspace({
+      visitorToken: "reset-rollback-visitor",
+      clientIp: "198.51.100.67",
+      locale: "en-US",
+      now,
+    });
+    const accountIds = (
+      await prisma.account.findMany({
+        where: { userId: workspace.userId },
+        orderBy: { id: "asc" },
+        select: { id: true },
+      })
+    ).map(({ id }) => id);
+    const countersBefore = await prisma.demoWorkspace.findUniqueOrThrow({
+      where: { userId: workspace.userId },
+      select: {
+        expiresAt: true,
+        mutationCount: true,
+        mutationWindowStartedAt: true,
+        mutationWindowCount: true,
+        resetCount: true,
+        refreshWindowStartedAt: true,
+        refreshCount: true,
+      },
+    });
+    await installRejectAccountTrigger();
+
+    await expect(
+      resetDemoWorkspace({ userId: workspace.userId, locale: "zh-TW", now }),
+    ).rejects.toMatchObject({ code: "DEMO_RESET_FAILED", status: 500 });
+
+    expect(
+      (
+        await prisma.account.findMany({
+          where: { userId: workspace.userId },
+          orderBy: { id: "asc" },
+          select: { id: true },
+        })
+      ).map(({ id }) => id),
+    ).toEqual(accountIds);
+    await expect(
+      prisma.demoWorkspace.findUniqueOrThrow({
+        where: { userId: workspace.userId },
+        select: {
+          expiresAt: true,
+          mutationCount: true,
+          mutationWindowStartedAt: true,
+          mutationWindowCount: true,
+          resetCount: true,
+          refreshWindowStartedAt: true,
+          refreshCount: true,
+        },
+      }),
+    ).resolves.toEqual(countersBefore);
   });
 
   it("deletes expired workspaces in bounded batches of 25", async () => {

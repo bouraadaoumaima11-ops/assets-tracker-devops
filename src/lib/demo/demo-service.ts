@@ -8,8 +8,9 @@ import {
 } from "@/lib/demo/demo-crypto";
 import { PublicDemoError } from "@/lib/demo/demo-errors";
 import { getPreparedDemoFixture } from "@/lib/demo/demo-fixture-source";
-import { persistDemoFixture } from "@/lib/demo/demo-fixture-service";
+import { deleteDemoDomainRows, persistDemoFixture } from "@/lib/demo/demo-fixture-service";
 import { recordDemoMetric } from "@/lib/demo/demo-metrics";
+import { consumeDemoMutationQuota, type DemoQuotaResult } from "@/lib/demo/demo-quota-service";
 import {
   DEMO_CAPACITY_LOCK_KEY,
   DEMO_CLEANUP_BATCH_SIZE,
@@ -242,5 +243,51 @@ export async function deleteExpiredDemoUser(userId: string, now: Date) {
   } catch {
     recordDemoMetric("cleanup_failed");
     return { deleted: 0, failed: true };
+  }
+}
+
+export function demoQuotaError(result: Exclude<DemoQuotaResult, { ok: true }>) {
+  if (result.reason === "expired" || result.reason === "missing") {
+    return new PublicDemoError("DEMO_EXPIRED", 410, "Public Demo expired");
+  }
+  if (result.reason === "rate" || result.reason === "conflict") {
+    return new PublicDemoError(
+      "DEMO_RATE_LIMITED",
+      429,
+      "Public Demo rate limit reached",
+      result.retryAfterSeconds ?? 1,
+    );
+  }
+  return new PublicDemoError("DEMO_QUOTA_EXHAUSTED", 403, "Public Demo quota exhausted");
+}
+
+export async function resetDemoWorkspace(input: {
+  userId: string;
+  locale: "en-US" | "zh-TW";
+  now: Date;
+}) {
+  const startedAt = Date.now();
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const quota = await consumeDemoMutationQuota(tx, input.userId, input.now, { reset: true });
+      if (!quota.ok) throw demoQuotaError(quota);
+      await deleteDemoDomainRows(tx, input.userId);
+      const fixture = getPreparedDemoFixture({
+        userId: input.userId,
+        locale: input.locale,
+        now: input.now,
+      });
+      await persistDemoFixture(tx, fixture);
+      return { rowCount: fixture.rowCount };
+    });
+    recordDemoMetric("reset", {
+      durationMs: Date.now() - startedAt,
+      rows: result.rowCount,
+    });
+    return result;
+  } catch (error) {
+    if (error instanceof PublicDemoError) throw error;
+    recordDemoMetric("reset_failed", { durationMs: Date.now() - startedAt });
+    throw new PublicDemoError("DEMO_RESET_FAILED", 500, "Failed to reset public Demo");
   }
 }
