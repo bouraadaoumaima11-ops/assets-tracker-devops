@@ -35,6 +35,28 @@ function executeAnonymousRequest(pathname: string): Response {
   return response;
 }
 
+function executeAuthenticatedRequest(pathname: string, isDemo: boolean): Response {
+  const request = new NextRequest(`https://astt.app${pathname}`, {
+    headers: { cookie: "authjs.session-token=signed-session" },
+  });
+  Object.defineProperty(request, "auth", {
+    value: {
+      user: {
+        id: isDemo ? "demo-user" : "formal-user",
+        isDemo,
+        demoExpiresAt: isDemo ? "2026-08-02T00:00:00.000Z" : null,
+      },
+    },
+  });
+  const response = proxy(request, {} as NextFetchEvent);
+
+  if (!(response instanceof Response)) {
+    throw new Error("Proxy did not return a response for an authenticated request");
+  }
+
+  return response;
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -108,6 +130,30 @@ describe("bot probe filtering inside the middleware", () => {
 
     expect(response.headers.get("location")).toBe("https://astt.app/login");
   });
+});
+
+describe("Demo formal-login handoff", () => {
+  it("allows only an active Demo through /login?from=demo", () => {
+    const response = executeAuthenticatedRequest("/login?from=demo", true);
+
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+    expect(response.headers.get("location")).toBeNull();
+  });
+
+  it("still redirects a formal principal that supplies from=demo", () => {
+    const response = executeAuthenticatedRequest("/login?from=demo", false);
+
+    expect(response.headers.get("location")).toBe("https://astt.app/");
+  });
+
+  it.each(["/login?from=x", "/login?from=demo&from=demo"])(
+    "rejects the non-scalar Demo handoff %s",
+    (pathname) => {
+      const response = executeAuthenticatedRequest(pathname, true);
+
+      expect(response.headers.get("location")).toBe("https://astt.app/");
+    },
+  );
 });
 
 describe("getSession identity source (#639)", () => {

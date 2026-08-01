@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEMO_ERROR_CODES } from "@/lib/demo/demo-errors";
 
@@ -49,6 +50,7 @@ vi.mock("@/lib/prisma", () => ({ prisma: { user: { upsert: vi.fn() } } }));
 vi.mock("@/lib/env", () => ({
   AUTH_SECRET: "task-7-unit-secret",
   AUTH_SELF_HOST_PASSWORD: undefined,
+  isGoogleAuthEnabled: true,
   isSelfHostAuthEnabled: false,
   isPreviewAuthEnabled: true,
   previewAuthRequiresPassword: false,
@@ -74,6 +76,9 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({ get: h.cookieGet, set: h.cookieSet })),
 }));
 vi.mock("next/navigation", () => ({ redirect: h.redirect }));
+vi.mock("next-intl/server", () => ({
+  getTranslations: vi.fn(async () => (key: string) => key),
+}));
 
 async function loadAuthConfig(): Promise<CapturedAuthConfig> {
   h.authConfig = null;
@@ -84,6 +89,37 @@ async function loadAuthConfig(): Promise<CapturedAuthConfig> {
 
 async function loadStartAction() {
   return (await import("@/app/demo/actions")).startPublicDemoAction;
+}
+
+type ElementWithProps = ReactElement<{
+  action?: () => Promise<unknown>;
+  children?: ReactNode;
+}>;
+
+function findElement(
+  node: ReactNode,
+  predicate: (element: ElementWithProps) => boolean,
+): ElementWithProps | null {
+  if (!node || typeof node !== "object" || !("type" in node) || !("props" in node)) return null;
+  const element = node as ElementWithProps;
+  if (predicate(element)) return element;
+  const children = element.props.children;
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const match = findElement(child, predicate);
+    if (match) return match;
+  }
+  return null;
+}
+
+async function renderLoginGate(
+  searchParams: Record<string, string | string[] | undefined>,
+): Promise<ElementWithProps> {
+  const { default: LoginPage } = await import("@/app/login/page");
+  const page = LoginPage({ searchParams: Promise.resolve(searchParams) }) as ElementWithProps;
+  const gate = page.props.children as ElementWithProps;
+  return (await (gate.type as (props: unknown) => Promise<ElementWithProps>)(
+    gate.props,
+  )) as ElementWithProps;
 }
 
 describe("public Demo credentials provider", () => {
@@ -310,6 +346,63 @@ describe("startPublicDemoAction", () => {
     expect(h.cookieSet).not.toHaveBeenCalled();
     expect(h.createDemoLoginTicket).not.toHaveBeenCalled();
     expect(h.signIn).not.toHaveBeenCalled();
+  });
+});
+
+describe("safe formal sign-in handoff from Demo", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    h.signIn.mockReset().mockResolvedValue(undefined);
+    h.signOut.mockReset().mockResolvedValue(undefined);
+    h.redirect.mockClear();
+    h.getAuthContext.mockReset().mockResolvedValue({
+      status: "active",
+      session: { user: { id: "demo-user", isDemo: true, demoExpiresAt: null } },
+      principal: {
+        kind: "demo",
+        userId: "demo-user",
+        expiresAt: new Date("2026-08-02T00:00:00.000Z"),
+      },
+    });
+  });
+
+  it("completes Demo sign-out before a later request may initiate Google OAuth", async () => {
+    const loginContent = await renderLoginGate({ from: "demo" });
+    const content = await (loginContent.type as (props: unknown) => Promise<ElementWithProps>)(
+      loginContent.props,
+    );
+    const googleForm = findElement(
+      content,
+      (element) =>
+        element.type === "form" &&
+        typeof element.props.action === "function" &&
+        findElement(
+          element.props.children,
+          (child) =>
+            child.props.children === "googleButton" ||
+            (Array.isArray(child.props.children) && child.props.children.includes("googleButton")),
+        ) !== null,
+    );
+
+    expect(googleForm).not.toBeNull();
+    await googleForm?.props.action?.();
+
+    expect(h.getAuthContext).toHaveBeenCalledTimes(2);
+    expect(h.signOut).toHaveBeenCalledWith({ redirectTo: "/login" });
+    expect(h.signIn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["another source", { from: "x" }],
+    ["a one-value array", { from: ["demo"] }],
+    ["duplicate values", { from: ["demo", "demo"] }],
+    ["a stale-session combination", { from: "x", "stale-session": "1" }],
+  ])("rejects %s instead of exposing formal controls to an active Demo", async (_label, params) => {
+    await expect(renderLoginGate(params)).rejects.toThrow("NEXT_REDIRECT:/");
+  });
+
+  it("accepts only the scalar from=demo handoff for an active Demo", async () => {
+    await expect(renderLoginGate({ from: "demo" })).resolves.toBeDefined();
   });
 });
 

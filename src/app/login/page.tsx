@@ -1,7 +1,7 @@
 // S1: force-static is incompatible with nextConfig.cacheComponents (PPR mode).
 // PPR prerendering the Suspense fallback shell is the correct tier here.
 import { Suspense } from "react";
-import { signIn } from "@/auth";
+import { signIn, signOut } from "@/auth";
 import { DemoLoginButton } from "@/components/demo/demo-login-button";
 import { Button } from "@/components/ui/button";
 import { TrendingUp, Lock, ShieldCheck, EyeOff } from "lucide-react";
@@ -23,6 +23,14 @@ type LoginPageProps = {
     from?: string | string[];
   }>;
 };
+
+async function exitActiveDemoBeforeFormalSignIn(): Promise<boolean> {
+  const authContext = await getAuthContext();
+  if (authContext.status !== "active" || authContext.principal.kind !== "demo") return false;
+
+  await signOut({ redirectTo: "/login" });
+  return true;
+}
 
 async function LoginContent() {
   const t = await getTranslations("login");
@@ -60,6 +68,7 @@ async function LoginContent() {
           <form
             action={async () => {
               "use server";
+              if (await exitActiveDemoBeforeFormalSignIn()) return;
               await signIn("google", { redirectTo: "/" });
             }}
             className="pt-4"
@@ -107,6 +116,7 @@ async function LoginContent() {
             <form
               action={async (formData: FormData) => {
                 "use server";
+                if (await exitActiveDemoBeforeFormalSignIn()) return;
                 await signIn("self-host", {
                   password: formData.get("password") as string,
                   redirectTo: "/",
@@ -166,6 +176,7 @@ async function LoginContent() {
             <form
               action={async (formData: FormData) => {
                 "use server";
+                if (await exitActiveDemoBeforeFormalSignIn()) return;
                 await signIn("credentials", {
                   password: formData.get("password") as string,
                   redirectTo: "/",
@@ -211,7 +222,7 @@ async function LoginGate({ searchParams }: LoginPageProps) {
   const authContext = await getAuthContext();
 
   if (authContext.status === "active") {
-    if (authContext.principal.kind === "formal" || params.from === undefined) redirect("/");
+    if (authContext.principal.kind === "formal" || params.from !== "demo") redirect("/");
   }
 
   return <LoginContent />;

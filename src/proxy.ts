@@ -131,8 +131,16 @@ const authMiddleware = auth((req) => {
   }
 
   const isStaleSessionRecovery = req.nextUrl.searchParams.has("stale-session");
+  const fromValues = req.nextUrl.searchParams.getAll("from");
+  const isDemoFormalLoginHandoff =
+    req.auth?.user?.isDemo === true && fromValues.length === 1 && fromValues[0] === "demo";
 
-  if (isLoggedIn && req.nextUrl.pathname === "/login" && !isStaleSessionRecovery) {
+  if (
+    isLoggedIn &&
+    req.nextUrl.pathname === "/login" &&
+    !isDemoFormalLoginHandoff &&
+    !(isStaleSessionRecovery && req.auth?.user?.isDemo !== true)
+  ) {
     const newUrl = new URL("/", req.nextUrl.origin);
     return Response.redirect(newUrl);
   }
