@@ -2,9 +2,9 @@ import { NextRequest } from "next/server";
 import type { NextFetchEvent } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { authMock, userExistsMock, headersMock } = vi.hoisted(() => ({
+const { authMock, resolvePrincipalMock, headersMock } = vi.hoisted(() => ({
   authMock: vi.fn(),
-  userExistsMock: vi.fn(),
+  resolvePrincipalMock: vi.fn(),
   headersMock: vi.fn(),
 }));
 
@@ -16,7 +16,7 @@ vi.mock("next-auth", () => ({
 
 vi.mock("../../src/auth.config", () => ({ default: {} }));
 vi.mock("@/auth", () => ({ auth: authMock }));
-vi.mock("@/lib/auth-user", () => ({ userExists: userExistsMock }));
+vi.mock("@/lib/auth-principal", () => ({ resolvePrincipal: resolvePrincipalMock }));
 vi.mock("next/headers", () => ({ headers: headersMock }));
 
 import proxy, { config } from "@/proxy";
@@ -115,7 +115,7 @@ describe("getSession identity source (#639)", () => {
 
   beforeEach(() => {
     authMock.mockReset();
-    userExistsMock.mockReset();
+    resolvePrincipalMock.mockReset();
     headersMock.mockReset();
     headersMock.mockResolvedValue(
       new Headers({
@@ -130,7 +130,7 @@ describe("getSession identity source (#639)", () => {
 
     await expect(getSession()).resolves.toBeNull();
 
-    expect(userExistsMock).not.toHaveBeenCalledWith(VICTIM_ID);
+    expect(resolvePrincipalMock).not.toHaveBeenCalledWith(VICTIM_ID);
   });
 
   it("never reads request headers to establish identity", async () => {
@@ -144,10 +144,19 @@ describe("getSession identity source (#639)", () => {
   it("still resolves the cookie-backed session from auth()", async () => {
     const session = { user: { id: "clowner0000000000000000", email: "owner@example.com" } };
     authMock.mockResolvedValue(session);
-    userExistsMock.mockResolvedValue(true);
+    resolvePrincipalMock.mockResolvedValue({
+      status: "active",
+      principal: { kind: "formal", userId: session.user.id },
+    });
 
-    await expect(getSession()).resolves.toEqual(session);
-    expect(userExistsMock).toHaveBeenCalledWith(session.user.id);
+    await expect(getSession()).resolves.toEqual({
+      user: {
+        ...session.user,
+        isDemo: false,
+        demoExpiresAt: null,
+      },
+    });
+    expect(resolvePrincipalMock).toHaveBeenCalledWith(session.user.id);
   });
 });
 
