@@ -3,7 +3,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
 import { PrismaClient } from "@/generated/prisma/client";
-import { createDemoLoginTicket } from "@/lib/demo/demo-crypto";
+import { createDemoLoginTicket, hashDemoVisitor } from "@/lib/demo/demo-crypto";
+import { DEMO_CAPACITY_LOCK_KEY, DEMO_LIFETIME_MS } from "@/lib/demo/demo-policy";
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is required for public Demo integration tests");
@@ -78,6 +79,24 @@ async function deleteTaskUsers() {
       OR: [{ demoWorkspace: { isNot: null } }, { name: { startsWith: "Task 4" } }],
     },
   });
+}
+
+async function waitForResumeDecisionOrAdvisoryWait(isSettled: () => boolean) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (isSettled()) return;
+    const [row] = await prisma.$queryRaw<[{ waiting: boolean }]>`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND objid = ${DEMO_CAPACITY_LOCK_KEY}
+          AND NOT granted
+      ) AS "waiting"
+    `;
+    if (row.waiting) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Resume neither resolved nor waited for the advisory lock");
 }
 
 beforeAll(async () => {
@@ -244,6 +263,89 @@ describe("public Demo lifecycle", () => {
     expect(resumed).toMatchObject({ userId: first.userId, resumed: true });
     expect(resumed.expiresAt).toEqual(first.expiresAt);
     expect(await prisma.demoWorkspace.count()).toBe(250);
+  });
+
+  it("rechecks resume under the advisory lock before returning an identity", async () => {
+    const visitorToken = "locked-resume-visitor";
+    const visitorHash = hashDemoVisitor(visitorToken, process.env.AUTH_SECRET!);
+    const oldUserId = randomUUID();
+    const oldExpiresAt = new Date(now.getTime() + 60_000);
+    await prisma.user.create({ data: { id: oldUserId, name: "Demo visitor" } });
+    await prisma.demoWorkspace.create({
+      data: {
+        userId: oldUserId,
+        visitorHash,
+        creatorHash: "locked-resume-creator",
+        expiresAt: oldExpiresAt,
+      },
+    });
+
+    let releaseReplacement!: () => void;
+    const replacementRelease = new Promise<void>((resolve) => {
+      releaseReplacement = resolve;
+    });
+    let signalReplacementReady!: (userId: string) => void;
+    const replacementReady = new Promise<string>((resolve) => {
+      signalReplacementReady = resolve;
+    });
+    const replacement = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT true AS "locked"
+        FROM (SELECT pg_advisory_xact_lock(${DEMO_CAPACITY_LOCK_KEY})) AS capacity_lock
+      `;
+      await tx.user.delete({ where: { id: oldUserId } });
+      const replacementUser = await tx.user.create({ data: { name: "Demo visitor" } });
+      await tx.demoWorkspace.create({
+        data: {
+          userId: replacementUser.id,
+          visitorHash,
+          creatorHash: "locked-resume-creator",
+          expiresAt: oldExpiresAt,
+        },
+      });
+      signalReplacementReady(replacementUser.id);
+      await replacementRelease;
+    });
+    const replacementUserId = await replacementReady;
+
+    const resume = ensureDemoWorkspace({
+      visitorToken,
+      clientIp: "198.51.100.61",
+      locale: "en-US",
+      now,
+    });
+    let resumeSettled = false;
+    void resume.then(
+      () => {
+        resumeSettled = true;
+      },
+      () => {
+        resumeSettled = true;
+      },
+    );
+    try {
+      await waitForResumeDecisionOrAdvisoryWait(() => resumeSettled);
+    } finally {
+      releaseReplacement();
+    }
+    await replacement;
+
+    expect(await resume).toMatchObject({ userId: replacementUserId, resumed: true });
+  });
+
+  it("persists expiry exactly one Demo lifetime after workspace creation", async () => {
+    const identity = await ensureDemoWorkspace({
+      visitorToken: "exact-lifetime-visitor",
+      clientIp: "198.51.100.62",
+      locale: "en-US",
+      now,
+    });
+    const workspace = await prisma.demoWorkspace.findUniqueOrThrow({
+      where: { userId: identity.userId },
+      select: { createdAt: true, expiresAt: true },
+    });
+
+    expect(workspace.expiresAt.getTime() - workspace.createdAt.getTime()).toBe(DEMO_LIFETIME_MS);
   });
 
   it("deletes expired workspaces in bounded batches of 25", async () => {

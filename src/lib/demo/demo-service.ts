@@ -88,12 +88,14 @@ async function createDemoWorkspaceUnderLock(
     }
 
     const user = await tx.user.create({ data: { name: "Demo visitor" } });
-    const expiresAt = new Date(input.now.getTime() + DEMO_LIFETIME_MS);
+    const createdAt = input.now;
+    const expiresAt = new Date(createdAt.getTime() + DEMO_LIFETIME_MS);
     await tx.demoWorkspace.create({
       data: {
         userId: user.id,
         visitorHash: input.visitorHash,
         creatorHash: input.creatorHash,
+        createdAt,
         expiresAt,
       },
     });
@@ -129,16 +131,6 @@ export async function ensureDemoWorkspace(
   }
   const visitorHash = hashDemoVisitor(input.visitorToken, AUTH_SECRET);
   const creatorHash = hashDemoCreator(input.clientIp, AUTH_SECRET);
-  const active = await prisma.demoWorkspace.findUnique({ where: { visitorHash } });
-  if (active && input.now < active.expiresAt) {
-    recordDemoMetric("resumed");
-    return {
-      userId: active.userId,
-      visitorHash: active.visitorHash,
-      expiresAt: active.expiresAt,
-      resumed: true,
-    };
-  }
 
   const startedAt = Date.now();
   for (let attempt = 0; attempt < 2; attempt += 1) {
