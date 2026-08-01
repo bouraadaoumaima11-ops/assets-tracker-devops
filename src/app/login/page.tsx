@@ -24,9 +24,14 @@ type LoginPageProps = {
   }>;
 };
 
-async function exitActiveDemoBeforeFormalSignIn(): Promise<boolean> {
+async function exitDemoOriginBeforeFormalSignIn(): Promise<boolean> {
   const authContext = await getAuthContext();
-  if (authContext.status !== "active" || authContext.principal.kind !== "demo") return false;
+  const isDemoOrigin =
+    authContext.status === "demo-expired" ||
+    authContext.status === "demo-disabled" ||
+    (authContext.status === "missing" && authContext.sessionKind === "demo") ||
+    (authContext.status === "active" && authContext.principal.kind === "demo");
+  if (!isDemoOrigin) return false;
 
   await signOut({ redirectTo: "/login" });
   return true;
@@ -68,7 +73,7 @@ async function LoginContent() {
           <form
             action={async () => {
               "use server";
-              if (await exitActiveDemoBeforeFormalSignIn()) return;
+              if (await exitDemoOriginBeforeFormalSignIn()) return;
               await signIn("google", { redirectTo: "/" });
             }}
             className="pt-4"
@@ -116,7 +121,7 @@ async function LoginContent() {
             <form
               action={async (formData: FormData) => {
                 "use server";
-                if (await exitActiveDemoBeforeFormalSignIn()) return;
+                if (await exitDemoOriginBeforeFormalSignIn()) return;
                 await signIn("self-host", {
                   password: formData.get("password") as string,
                   redirectTo: "/",
@@ -176,7 +181,7 @@ async function LoginContent() {
             <form
               action={async (formData: FormData) => {
                 "use server";
-                if (await exitActiveDemoBeforeFormalSignIn()) return;
+                if (await exitDemoOriginBeforeFormalSignIn()) return;
                 await signIn("credentials", {
                   password: formData.get("password") as string,
                   redirectTo: "/",

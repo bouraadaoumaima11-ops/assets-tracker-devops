@@ -122,6 +122,29 @@ async function renderLoginGate(
   )) as ElementWithProps;
 }
 
+async function getGoogleFormAction(
+  searchParams: Record<string, string | string[] | undefined>,
+): Promise<() => Promise<unknown>> {
+  const loginContent = await renderLoginGate(searchParams);
+  const content = await (loginContent.type as (props: unknown) => Promise<ElementWithProps>)(
+    loginContent.props,
+  );
+  const googleForm = findElement(
+    content,
+    (element) =>
+      element.type === "form" &&
+      typeof element.props.action === "function" &&
+      findElement(
+        element.props.children,
+        (child) =>
+          child.props.children === "googleButton" ||
+          (Array.isArray(child.props.children) && child.props.children.includes("googleButton")),
+      ) !== null,
+  );
+  if (!googleForm?.props.action) throw new Error("Google sign-in form was not rendered");
+  return googleForm.props.action;
+}
+
 describe("public Demo credentials provider", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -367,29 +390,53 @@ describe("safe formal sign-in handoff from Demo", () => {
   });
 
   it("completes Demo sign-out before a later request may initiate Google OAuth", async () => {
-    const loginContent = await renderLoginGate({ from: "demo" });
-    const content = await (loginContent.type as (props: unknown) => Promise<ElementWithProps>)(
-      loginContent.props,
-    );
-    const googleForm = findElement(
-      content,
-      (element) =>
-        element.type === "form" &&
-        typeof element.props.action === "function" &&
-        findElement(
-          element.props.children,
-          (child) =>
-            child.props.children === "googleButton" ||
-            (Array.isArray(child.props.children) && child.props.children.includes("googleButton")),
-        ) !== null,
-    );
-
-    expect(googleForm).not.toBeNull();
-    await googleForm?.props.action?.();
+    const googleAction = await getGoogleFormAction({ from: "demo" });
+    await googleAction();
 
     expect(h.getAuthContext).toHaveBeenCalledTimes(2);
     expect(h.signOut).toHaveBeenCalledWith({ redirectTo: "/login" });
     expect(h.signIn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expired", { status: "demo-expired", userId: "expired-demo" }],
+    ["disabled", { status: "demo-disabled", userId: "disabled-demo" }],
+    ["missing-authoritative-user", { status: "missing", sessionKind: "demo" as const }],
+  ])("completes %s Demo-origin sign-out before Google OAuth", async (_label, authContext) => {
+    h.getAuthContext.mockResolvedValue(authContext);
+
+    const googleAction = await getGoogleFormAction({ from: "demo" });
+    await googleAction();
+
+    expect(h.signOut).toHaveBeenCalledWith({ redirectTo: "/login" });
+    expect(h.signIn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["anonymous", { status: "anonymous" }],
+    ["missing formal", { status: "missing", sessionKind: "formal" as const }],
+  ])("preserves Google sign-in for an %s context", async (_label, authContext) => {
+    h.getAuthContext.mockResolvedValue(authContext);
+
+    const googleAction = await getGoogleFormAction({});
+    await googleAction();
+
+    expect(h.signOut).not.toHaveBeenCalled();
+    expect(h.signIn).toHaveBeenCalledWith("google", { redirectTo: "/" });
+  });
+
+  it("preserves Google sign-in when a previously rendered action observes a formal principal", async () => {
+    h.getAuthContext.mockResolvedValueOnce({ status: "anonymous" }).mockResolvedValueOnce({
+      status: "active",
+      session: { user: { id: "formal-user", isDemo: false, demoExpiresAt: null } },
+      principal: { kind: "formal", userId: "formal-user" },
+    });
+
+    const googleAction = await getGoogleFormAction({});
+    await googleAction();
+
+    expect(h.signOut).not.toHaveBeenCalled();
+    expect(h.signIn).toHaveBeenCalledWith("google", { redirectTo: "/" });
   });
 
   it.each([

@@ -20,7 +20,7 @@ vi.mock("@/lib/auth-principal", () => ({ resolvePrincipal: resolvePrincipalMock 
 vi.mock("next/headers", () => ({ headers: headersMock }));
 
 import proxy, { config } from "@/proxy";
-import { getSession } from "@/lib/auth-session";
+import { getAuthContext, getSession } from "@/lib/auth-session";
 
 const TUNNEL_PATH = "/a1b2c3d4";
 
@@ -203,6 +203,36 @@ describe("getSession identity source (#639)", () => {
       },
     });
     expect(resolvePrincipalMock).toHaveBeenCalledWith(session.user.id);
+  });
+
+  it("retains Demo origin on a missing principal without granting a session", async () => {
+    authMock.mockResolvedValue({
+      user: {
+        id: "deleted-demo",
+        isDemo: true,
+        demoExpiresAt: "2026-08-02T00:00:00.000Z",
+      },
+    });
+    resolvePrincipalMock.mockResolvedValue({ status: "missing" });
+
+    await expect(getAuthContext()).resolves.toEqual({
+      status: "missing",
+      sessionKind: "demo",
+    });
+    await expect(getSession()).resolves.toBeNull();
+  });
+
+  it("retains formal origin on a missing principal without granting a session", async () => {
+    authMock.mockResolvedValue({
+      user: { id: "deleted-formal", isDemo: false, demoExpiresAt: null },
+    });
+    resolvePrincipalMock.mockResolvedValue({ status: "missing" });
+
+    await expect(getAuthContext()).resolves.toEqual({
+      status: "missing",
+      sessionKind: "formal",
+    });
+    await expect(getSession()).resolves.toBeNull();
   });
 });
 

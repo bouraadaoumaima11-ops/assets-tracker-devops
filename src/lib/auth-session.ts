@@ -6,7 +6,7 @@ import { resolvePrincipal, type AuthPrincipal } from "@/lib/auth-principal";
 
 export type AuthContext =
   | { status: "anonymous" }
-  | { status: "missing" }
+  | { status: "missing"; sessionKind: "demo" | "formal" }
   | { status: "demo-expired"; userId: string }
   | { status: "demo-disabled"; userId: string }
   | { status: "active"; session: Session; principal: AuthPrincipal };
@@ -31,6 +31,14 @@ export const getAuthContext = cache(async (): Promise<AuthContext> => {
   if (!session?.user?.id) return { status: "anonymous" };
 
   const resolution = await resolvePrincipal(session.user.id);
+  if (resolution.status === "missing") {
+    return {
+      status: "missing",
+      // This signed-session claim is a cleanup hint only. A missing principal
+      // remains unauthorized and can never become active through this value.
+      sessionKind: session.user.isDemo === true ? "demo" : "formal",
+    };
+  }
   if (resolution.status !== "active") return resolution;
 
   const demoAwareSession = session as DemoAwareSession;
