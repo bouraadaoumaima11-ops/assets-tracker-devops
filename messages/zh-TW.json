@@ -1231,6 +1231,41 @@
         "DEMO_INITIALIZATION_FAILED": "無法準備 Demo，請再試一次。",
         "DEMO_RESET_FAILED": "無法重設 Demo，請再試一次。"
       }
+    },
+    "banner": {
+      "title": "Demo 模式",
+      "expiry": "到期時間：{expiry}",
+      "remaining": "剩餘 {duration}",
+      "actions": {
+        "reset": "重設資料",
+        "signIn": "登入",
+        "exit": "離開 Demo"
+      },
+      "announcements": {
+        "oneHour": "此 Demo 還剩一小時。",
+        "tenMinutes": "此 Demo 還剩十分鐘。",
+        "expired": "此 Demo 已過期。"
+      }
+    },
+    "reset": {
+      "title": "要重設 Demo 資料嗎？",
+      "description": "這會以新的範例資料取代目前 Demo 的資料，但不會變更已核准的 Demo 到期時間。",
+      "cancel": "保留目前資料",
+      "confirm": "重設 Demo",
+      "resetting": "正在重設…",
+      "success": "Demo 資料已重設。"
+    },
+    "expired": {
+      "title": "您的暫存 Demo 資料已過期",
+      "description": "Demo 工作區使用私密的暫存範例資料，並會自動到期。",
+      "disabled": "公開 Demo 暫時無法使用。",
+      "signIn": "登入您的帳號",
+      "privacy": "隱私政策"
+    },
+    "apiErrors": {
+      "DEMO_RATE_LIMITED": "Demo 請求過於頻繁，請稍候再試。",
+      "DEMO_QUOTA_EXHAUSTED": "這個 Demo 已達操作次數上限。",
+      "DEMO_RESTRICTED": "Demo 不提供這項操作。"
     }
   },
   "privacy": {

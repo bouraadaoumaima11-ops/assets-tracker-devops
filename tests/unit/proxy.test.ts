@@ -1,12 +1,14 @@
-import { NextRequest } from "next/server";
+import { NextRequest, type NextResponse } from "next/server";
 import type { NextFetchEvent } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { authMock, resolvePrincipalMock, headersMock } = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => ({
   authMock: vi.fn(),
   resolvePrincipalMock: vi.fn(),
   headersMock: vi.fn(),
+  publicDemoEnabled: true,
 }));
+const { authMock, resolvePrincipalMock, headersMock } = mocks;
 
 vi.mock("next-auth", () => ({
   default: () => ({
@@ -15,9 +17,14 @@ vi.mock("next-auth", () => ({
 }));
 
 vi.mock("../../src/auth.config", () => ({ default: {} }));
-vi.mock("@/auth", () => ({ auth: authMock }));
-vi.mock("@/lib/auth-principal", () => ({ resolvePrincipal: resolvePrincipalMock }));
-vi.mock("next/headers", () => ({ headers: headersMock }));
+vi.mock("@/auth", () => ({ auth: mocks.authMock }));
+vi.mock("@/lib/auth-principal", () => ({ resolvePrincipal: mocks.resolvePrincipalMock }));
+vi.mock("next/headers", () => ({ headers: mocks.headersMock }));
+vi.mock("@/lib/env", () => ({
+  get isPublicDemoEnabled() {
+    return mocks.publicDemoEnabled;
+  },
+}));
 
 import proxy, { config } from "@/proxy";
 import { getAuthContext, getSession } from "@/lib/auth-session";
@@ -58,6 +65,7 @@ function executeAuthenticatedRequest(pathname: string, isDemo: boolean): Respons
 }
 
 afterEach(() => {
+  mocks.publicDemoEnabled = true;
   vi.unstubAllEnvs();
 });
 
@@ -104,13 +112,104 @@ describe("middleware matcher covers dynamic routes (#639)", () => {
     "/robots.txt",
     "/sitemap.xml",
     "/favicon.ico",
-    "/login",
     "/privacy",
     "/terms",
     "/_next/static/chunk.js",
     "/api/accounts",
   ])("still excludes the non-routable or public path %s", (pathname) => {
     expect(matcher.test(pathname)).toBe(false);
+  });
+
+  it("keeps an active signed Demo on protected routes", () => {
+    const request = new NextRequest("https://astt.app/accounts", {
+      headers: { cookie: "authjs.session-token=signed-session" },
+    });
+    Object.defineProperty(request, "auth", {
+      value: {
+        user: { id: "demo-user", isDemo: true, demoExpiresAt: "2099-01-01T00:00:00.000Z" },
+      },
+    });
+
+    const response = proxy(request, {} as NextFetchEvent) as Response;
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it("routes a signed Demo to expiry while the kill switch is off", () => {
+    mocks.publicDemoEnabled = false;
+    const request = new NextRequest("https://astt.app/accounts", {
+      headers: { cookie: "authjs.session-token=signed-session" },
+    });
+    Object.defineProperty(request, "auth", {
+      value: {
+        user: { id: "demo-user", isDemo: true, demoExpiresAt: "2099-01-01T00:00:00.000Z" },
+      },
+    });
+
+    const response = proxy(request, {} as NextFetchEvent) as Response;
+    expect(response.headers.get("location")).toBe("https://astt.app/demo/expired");
+  });
+
+  it.each(["/login", "/demo/expired"])("matches Demo entry path %s", (pathname) => {
+    expect(matcher.test(pathname)).toBe(true);
+  });
+});
+
+describe("public Demo proxy lifecycle", () => {
+  it("pre-seeds a valid visitor token for anonymous Demo entry pages without replacing it", () => {
+    const first = executeAnonymousRequest("/login") as NextResponse;
+    const token = first.cookies.get("asset-tracker-demo-visitor")?.value;
+    expect(token).toMatch(/^[a-f0-9]{64}$/);
+
+    const reused = new NextRequest("https://astt.app/login", {
+      headers: { cookie: `asset-tracker-demo-visitor=${token}` },
+    });
+    const second = proxy(reused, {} as NextFetchEvent) as NextResponse;
+    expect(second.cookies.get("asset-tracker-demo-visitor")).toBeUndefined();
+  });
+
+  it.each([
+    ["2020-01-01T00:00:00.000Z", "/accounts"],
+    [null, "/accounts"],
+    ["not-a-date", "/accounts"],
+  ])("routes unavailable signed Demo to expiry (%s)", (demoExpiresAt, pathname) => {
+    const request = new NextRequest(`https://astt.app${pathname}`, {
+      headers: { cookie: "authjs.session-token=signed-session" },
+    });
+    Object.defineProperty(request, "auth", {
+      value: { user: { id: "demo-user", isDemo: true, demoExpiresAt } },
+    });
+
+    const response = proxy(request, {} as NextFetchEvent) as Response;
+    expect(response.headers.get("location")).toBe("https://astt.app/demo/expired");
+  });
+
+  it("allows unavailable Demo sessions to reach formal login and stale-session recovery", () => {
+    for (const pathname of ["/login?from=demo", "/login?stale-session=1"]) {
+      const request = new NextRequest(`https://astt.app${pathname}`, {
+        headers: { cookie: "authjs.session-token=signed-session" },
+      });
+      Object.defineProperty(request, "auth", {
+        value: {
+          user: { id: "demo-user", isDemo: true, demoExpiresAt: "2020-01-01T00:00:00.000Z" },
+        },
+      });
+      const response = proxy(request, {} as NextFetchEvent) as Response;
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+      expect(response.headers.get("location")).toBeNull();
+    }
+  });
+
+  it("does not apply Demo expiry fields to formal sessions", () => {
+    const request = new NextRequest("https://astt.app/accounts", {
+      headers: { cookie: "authjs.session-token=signed-session" },
+    });
+    Object.defineProperty(request, "auth", {
+      value: {
+        user: { id: "formal-user", isDemo: false, demoExpiresAt: "2020-01-01T00:00:00.000Z" },
+      },
+    });
+    const response = proxy(request, {} as NextFetchEvent) as Response;
+    expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 });
 

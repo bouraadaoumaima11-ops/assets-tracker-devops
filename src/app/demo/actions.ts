@@ -3,6 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { revalidateTag } from "next/cache";
 import { signIn, signOut } from "@/auth";
 import { AUTH_SECRET } from "@/lib/env";
 import {
@@ -13,7 +14,7 @@ import {
 } from "@/lib/demo/demo-policy";
 import { createDemoLoginTicket } from "@/lib/demo/demo-crypto";
 import { PublicDemoError, type DemoErrorCode } from "@/lib/demo/demo-errors";
-import { ensureDemoWorkspace } from "@/lib/demo/demo-service";
+import { ensureDemoWorkspace, resetDemoWorkspace } from "@/lib/demo/demo-service";
 import { getAuthContext } from "@/lib/auth-session";
 import { getClientIpFromHeaders, rateLimitCheckWithPrune } from "@/lib/rate-limit";
 
@@ -23,6 +24,13 @@ export type DemoActionState = {
 };
 
 export const INITIAL_DEMO_ACTION_STATE: DemoActionState = { errorCode: null };
+
+export type DemoResetActionState = DemoActionState & { completedResets: number };
+
+export const INITIAL_DEMO_RESET_ACTION_STATE: DemoResetActionState = {
+  errorCode: null,
+  completedResets: 0,
+};
 
 export async function startPublicDemoAction(
   _previous: DemoActionState,
@@ -87,4 +95,52 @@ export async function startPublicDemoAction(
 
 export async function exitPublicDemoAction() {
   await signOut({ redirectTo: "/login" });
+}
+
+export async function resetPublicDemoAction(
+  previous: DemoResetActionState,
+  _formData: FormData,
+): Promise<DemoResetActionState> {
+  const context = await getAuthContext();
+  if (context.status === "demo-expired") {
+    return { ...previous, errorCode: "DEMO_EXPIRED" };
+  }
+  if (context.status === "demo-disabled") {
+    return { ...previous, errorCode: "DEMO_DISABLED" };
+  }
+  if (context.status !== "active" || context.principal.kind !== "demo") {
+    return { ...previous, errorCode: "DEMO_RESTRICTED" };
+  }
+
+  const locale = (await cookies()).get("NEXT_LOCALE")?.value === "zh-TW" ? "zh-TW" : "en-US";
+  try {
+    await resetDemoWorkspace({
+      userId: context.principal.userId,
+      locale,
+      now: new Date(),
+    });
+    for (const tag of [
+      "accounts",
+      "net-worth",
+      "history",
+      "goals",
+      "calendar-entries",
+      "settings",
+      "stocks",
+    ]) {
+      revalidateTag(`${tag}:${context.principal.userId}`, { expire: 0 });
+    }
+    return {
+      errorCode: null,
+      completedResets: previous.completedResets + 1,
+    };
+  } catch (error) {
+    return error instanceof PublicDemoError
+      ? {
+          ...previous,
+          errorCode: error.code,
+          retryAfterSeconds: error.retryAfterSeconds,
+        }
+      : { ...previous, errorCode: "DEMO_RESET_FAILED" };
+  }
 }

@@ -1231,6 +1231,41 @@
         "DEMO_INITIALIZATION_FAILED": "The Demo could not be prepared. Please try again.",
         "DEMO_RESET_FAILED": "The Demo could not be reset. Please try again."
       }
+    },
+    "banner": {
+      "title": "Demo mode",
+      "expiry": "Expires {expiry}",
+      "remaining": "{duration} remaining",
+      "actions": {
+        "reset": "Reset data",
+        "signIn": "Sign in",
+        "exit": "Exit Demo"
+      },
+      "announcements": {
+        "oneHour": "One hour remains in this Demo.",
+        "tenMinutes": "Ten minutes remain in this Demo.",
+        "expired": "This Demo has expired."
+      }
+    },
+    "reset": {
+      "title": "Reset Demo data?",
+      "description": "This replaces the sample data in this Demo. Your approved Demo expiry time will not change.",
+      "cancel": "Keep current data",
+      "confirm": "Reset Demo",
+      "resetting": "Resetting…",
+      "success": "Demo data has been reset."
+    },
+    "expired": {
+      "title": "Your temporary Demo data has expired",
+      "description": "Demo workspaces are private, temporary sample data and automatically expire.",
+      "disabled": "The public Demo is temporarily unavailable.",
+      "signIn": "Sign in to your account",
+      "privacy": "Privacy Policy"
+    },
+    "apiErrors": {
+      "DEMO_RATE_LIMITED": "Too many Demo requests. Please wait and try again.",
+      "DEMO_QUOTA_EXHAUSTED": "This Demo has reached its activity limit.",
+      "DEMO_RESTRICTED": "That action is not available in the Demo."
     }
   },
   "privacy": {
