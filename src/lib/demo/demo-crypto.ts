@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { DEMO_TICKET_TTL_MS } from "@/lib/demo/demo-policy";
 
 export type DemoLoginTicketPayload = {
   version: 1;
@@ -9,6 +10,46 @@ export type DemoLoginTicketPayload = {
 
 function purposeKey(secret: string, purpose: "visitor" | "creator" | "ticket") {
   return createHmac("sha256", secret).update(`asset-tracker/public-demo/${purpose}/v1`).digest();
+}
+
+function assertDemoSecret(secret: unknown): asserts secret is string {
+  if (typeof secret !== "string" || secret.trim().length === 0) {
+    throw new TypeError("Demo secret must be a non-empty string");
+  }
+}
+
+function isDemoLoginTicketPayload(payload: unknown): payload is DemoLoginTicketPayload {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Object.getPrototypeOf(payload) !== Object.prototype ||
+    Reflect.ownKeys(payload).length !== 4
+  ) {
+    return false;
+  }
+
+  const values = payload as Record<PropertyKey, unknown>;
+  const allowedKeys = ["version", "userId", "visitorHash", "expiresAt"];
+  if (!allowedKeys.every((key) => Object.hasOwn(values, key))) return false;
+
+  return (
+    values.version === 1 &&
+    typeof values.userId === "string" &&
+    values.userId.length > 0 &&
+    typeof values.visitorHash === "string" &&
+    values.visitorHash.length > 0 &&
+    typeof values.expiresAt === "number" &&
+    Number.isFinite(values.expiresAt) &&
+    Number.isSafeInteger(values.expiresAt)
+  );
+}
+
+function assertValidIssuedAt(issuedAt: Date): number {
+  const timestamp = issuedAt.getTime();
+  if (!Number.isSafeInteger(timestamp)) {
+    throw new TypeError("Demo ticket issuance time must be a valid date");
+  }
+  return timestamp;
 }
 
 function digest(value: string, secret: string, purpose: "visitor" | "creator") {
@@ -24,9 +65,15 @@ function decodeCanonicalBase64url(value: string): Buffer | null {
   }
 }
 
-export const hashDemoVisitor = (token: string, secret: string) => digest(token, secret, "visitor");
+export const hashDemoVisitor = (token: string, secret: string) => {
+  assertDemoSecret(secret);
+  return digest(token, secret, "visitor");
+};
 
-export const hashDemoCreator = (ip: string, secret: string) => digest(ip, secret, "creator");
+export const hashDemoCreator = (ip: string, secret: string) => {
+  assertDemoSecret(secret);
+  return digest(ip, secret, "creator");
+};
 
 export function demoHashesMatch(first: string, second: string): boolean {
   const firstBytes = Buffer.from(first);
@@ -34,8 +81,18 @@ export function demoHashesMatch(first: string, second: string): boolean {
   return firstBytes.length === secondBytes.length && timingSafeEqual(firstBytes, secondBytes);
 }
 
-export function createDemoLoginTicket(payload: DemoLoginTicketPayload, secret: string): string {
-  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+export function createDemoLoginTicket(
+  payload: DemoLoginTicketPayload,
+  secret: string,
+  issuedAt = new Date(),
+): string {
+  assertDemoSecret(secret);
+  if (!isDemoLoginTicketPayload(payload)) {
+    throw new TypeError("Demo ticket payload is invalid");
+  }
+  const expiresAt = assertValidIssuedAt(issuedAt) + DEMO_TICKET_TTL_MS;
+  const ticketPayload: DemoLoginTicketPayload = { ...payload, expiresAt };
+  const body = Buffer.from(JSON.stringify(ticketPayload)).toString("base64url");
   const signature = createHmac("sha256", purposeKey(secret, "ticket"))
     .update(body)
     .digest("base64url");
@@ -47,6 +104,7 @@ export function verifyDemoLoginTicket(
   secret: string,
   now: Date,
 ): DemoLoginTicketPayload | null {
+  assertDemoSecret(secret);
   const [body, suppliedSignature, trailing] = ticket.split(".");
   if (!body || !suppliedSignature || trailing !== undefined) return null;
   const base64url = /^[A-Za-z0-9_-]+$/;
@@ -60,17 +118,15 @@ export function verifyDemoLoginTicket(
   if (supplied.length !== expectedSignature.length) return null;
   if (!timingSafeEqual(supplied, expectedSignature)) return null;
   try {
-    const payload = JSON.parse(decodedBody.toString("utf8")) as Partial<DemoLoginTicketPayload>;
+    const payload: unknown = JSON.parse(decodedBody.toString("utf8"));
     if (
-      payload.version !== 1 ||
-      typeof payload.userId !== "string" ||
-      typeof payload.visitorHash !== "string" ||
-      typeof payload.expiresAt !== "number" ||
-      now.getTime() >= payload.expiresAt
+      !isDemoLoginTicketPayload(payload) ||
+      now.getTime() >= payload.expiresAt ||
+      payload.expiresAt - now.getTime() > DEMO_TICKET_TTL_MS
     ) {
       return null;
     }
-    return payload as DemoLoginTicketPayload;
+    return payload;
   } catch {
     return null;
   }
