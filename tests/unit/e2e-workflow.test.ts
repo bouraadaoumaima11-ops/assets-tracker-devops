@@ -76,6 +76,53 @@ describe("E2E CI contract", () => {
     expect(config).toContain('locale: "zh-TW"');
   });
 
+  test("disables retained artifacts for both public Demo projects", () => {
+    const config = read("playwright.config.ts");
+    const publicDesktop = config.slice(
+      config.indexOf('name: "Public Demo Desktop"'),
+      config.indexOf('name: "Public Demo Mobile zh-TW"'),
+    );
+    const publicMobile = config.slice(config.indexOf('name: "Public Demo Mobile zh-TW"'));
+
+    for (const publicProject of [publicDesktop, publicMobile]) {
+      expect(publicProject).toContain('trace: "off"');
+      expect(publicProject).toContain('screenshot: "off"');
+      expect(publicProject).toContain('video: "off"');
+    }
+
+    expect(config).toContain('trace: "on-first-retry"');
+    expect(config).toContain('screenshot: "only-on-failure"');
+  });
+
+  test("keeps the public Demo CI run out of retained Playwright reports", () => {
+    const config = read("playwright.config.ts");
+    const workflow = read(".github/workflows/e2e.yml");
+    const publicRun = workflow.slice(
+      workflow.indexOf("- name: Run public Demo E2E tests without retained artifacts"),
+      workflow.indexOf("- name: Upload Playwright report"),
+    );
+
+    expect(config).toContain('process.env.E2E_PUBLIC_DEMO_NO_ARTIFACTS === "1"');
+    expect(config).toContain('[["line"]]');
+    expect(config).toContain('outputDir: "/tmp/asset-tracker-public-demo-test-results"');
+    expect(workflow).toContain("- name: Run authenticated E2E tests");
+    expect(publicRun).toContain('E2E_PUBLIC_DEMO_NO_ARTIFACTS: "1"');
+    expect(publicRun).toContain('--project="Public Demo Desktop"');
+    expect(publicRun).toContain('--project="Public Demo Mobile zh-TW"');
+    expect(publicRun).not.toContain("playwright-report");
+    expect(workflow).toContain("path: playwright-report/");
+  });
+
+  test("keeps public Demo API assertions out of sensitive object and array diffs", () => {
+    const publicSpec = read("tests/e2e/public-demo.spec.ts");
+
+    expect(publicSpec).not.toContain(".toEqual(");
+    expect(publicSpec).not.toContain(".toMatchObject(");
+    expect(publicSpec).not.toContain("expect(resetAccounts).toHaveLength");
+    expect(publicSpec).toContain("expect(secondWorkspaceUnchanged).toBe(true)");
+    expect(publicSpec).toContain("expect(markerTransferredToFormalAccount).toBe(false)");
+  });
+
   test("omits public Demo projects for optional remote smoke unless explicitly enabled", () => {
     const config = read("playwright.config.ts");
 
@@ -102,4 +149,15 @@ describe("E2E CI contract", () => {
       expect(read(readme)).toContain("e2e.yml/badge.svg?branch=master&event=push");
     },
   );
+
+  test("documents CPU baselines, regression thresholds, and kill-switch response", () => {
+    const deployment = read("docs/DEPLOYMENT.md");
+
+    expect(deployment).toContain("database CPU utilization");
+    expect(deployment).toContain("application compute CPU utilization");
+    expect(deployment).toContain("24-hour pre-enable baseline window");
+    expect(deployment).toContain("post-enable window");
+    expect(deployment).toContain("exceeds the baseline by more than 10%");
+    expect(deployment).toContain("PUBLIC_DEMO_ENABLED=false");
+  });
 });

@@ -99,7 +99,7 @@ Rollout checklist:
 
 - In Preview, run ten concurrent distinct visitor creates after one warm-up and confirm p95 is under five seconds.
 - Confirm create and reset make zero external calls and fixture persistence uses at most 15 statement groups.
-- Compare a representative formal cron duration before and after rollout; alert or disable the Demo if the regression exceeds 10%.
+- Record database CPU utilization and application compute CPU utilization for representative formal cron runs over a 24-hour pre-enable baseline window, compare the same metrics over an equivalent post-enable window, and immediately set `PUBLIC_DEMO_ENABLED=false` and redeploy/restart if either exceeds the baseline by more than 10%.
 - Watch only low-cardinality created, resumed, reset, expired, deleted, limited, and failure counts.
 - Exercise the kill switch and verify formal authentication and Preview Internal Test Login still work.
 

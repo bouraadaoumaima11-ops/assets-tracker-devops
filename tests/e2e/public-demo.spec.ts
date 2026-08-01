@@ -272,9 +272,10 @@ test("public Demo journey", async ({ browser, page }, testInfo) => {
     const secondAccountsAfter = await responseData<Account[]>(
       await secondPage.request.get("/api/accounts"),
     );
-    expect(secondAccountsAfter.map(({ id }) => id)).toEqual(
-      secondAccountsBefore.map(({ id }) => id),
-    );
+    const secondWorkspaceUnchanged =
+      secondAccountsAfter.length === secondAccountsBefore.length &&
+      secondAccountsAfter.every(({ id }, index) => id === secondAccountsBefore[index]?.id);
+    expect(secondWorkspaceUnchanged).toBe(true);
     expect(
       (await responseData<Account[]>(await page.request.get("/api/accounts"))).some(
         ({ name }) => name === uniqueAccountName,
@@ -283,18 +284,16 @@ test("public Demo journey", async ({ browser, page }, testInfo) => {
 
     const exportResponse = await page.request.get("/api/settings/data");
     expect(exportResponse.status()).toBe(403);
-    await expect(exportResponse.json()).resolves.toMatchObject({
-      error: { code: "DEMO_RESTRICTED" },
-    });
+    const exportBody = (await exportResponse.json()) as { error?: { code?: unknown } };
+    expect(exportBody.error?.code === "DEMO_RESTRICTED").toBe(true);
     const importResponse = await page.request.fetch("/api/settings/data", {
       method: "POST",
       headers: { "content-type": "application/json" },
       data: "{ definitely not valid JSON",
     });
     expect(importResponse.status()).toBe(403);
-    await expect(importResponse.json()).resolves.toMatchObject({
-      error: { code: "DEMO_RESTRICTED" },
-    });
+    const importBody = (await importResponse.json()) as { error?: { code?: unknown } };
+    expect(importBody.error?.code === "DEMO_RESTRICTED").toBe(true);
 
     const recurringPath = `/api/accounts/${account.id}/recurring-cash-transactions`;
     const recurring = await responseData<{ id: string }>(
@@ -332,9 +331,26 @@ test("public Demo journey", async ({ browser, page }, testInfo) => {
     await page.getByRole("button", { name: "Reset Demo" }).click();
     await expect(page.getByText("Demo data has been reset.")).toBeVisible({ timeout: 60_000 });
     const resetAccounts = await responseData<Account[]>(await page.request.get("/api/accounts"));
-    expect(resetAccounts).toHaveLength(5);
+    expect(resetAccounts.length).toBe(5);
     expect(resetAccounts.some(({ name }) => name === uniqueAccountName)).toBe(false);
     expect((await demoSession(page)).user.demoExpiresAt).toBe(originalExpiry);
+
+    const postResetMarkerName = `E2E Demo transfer marker ${suffix}`;
+    await responseData<Account>(
+      await page.request.post("/api/accounts", {
+        data: {
+          name: postResetMarkerName,
+          type: "ASSET",
+          category: "BANK",
+          currency: "USD",
+          cashBalance: 0,
+        },
+      }),
+    );
+    const postResetMarkerExists = (
+      await responseData<Account[]>(await page.request.get("/api/accounts"))
+    ).some(({ name }) => name === postResetMarkerName);
+    expect(postResetMarkerExists).toBe(true);
 
     await page.goto("/login?from=demo");
     await signInWithInternalTestLogin(page);
@@ -342,11 +358,10 @@ test("public Demo journey", async ({ browser, page }, testInfo) => {
     const formalSessionResponse = await page.request.get("/api/auth/session");
     const formalSession = (await formalSessionResponse.json()) as SessionBody;
     expect(formalSession.user.isDemo).toBe(false);
-    expect(
-      (await responseData<Account[]>(await page.request.get("/api/accounts"))).some(
-        ({ name }) => name === uniqueAccountName,
-      ),
-    ).toBe(false);
+    const markerTransferredToFormalAccount = (
+      await responseData<Account[]>(await page.request.get("/api/accounts"))
+    ).some(({ name }) => name === postResetMarkerName);
+    expect(markerTransferredToFormalAccount).toBe(false);
 
     await expireDemoWorkspace(secondSession.user.id);
     await secondPage.reload();
