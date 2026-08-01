@@ -4,8 +4,98 @@ import { describe, expect, it } from "vitest";
 
 const root = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const between = (source: string, start: string, end: string) => {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex);
+  return source.slice(startIndex, endIndex);
+};
 
 describe("public Demo shell contract", () => {
+  it("passes authoritative Demo state into Settings cards and client messages", () => {
+    const settingsPage = read("src/app/(main)/settings/page.tsx");
+
+    expect(settingsPage).toContain("const isDemo = session.user.isDemo;");
+    expect(settingsPage).toContain("isDemo={isDemo}");
+    expect(settingsPage).toContain("<DataManagement isDemo={isDemo} />");
+    expect(settingsPage).toContain('"demo"');
+  });
+
+  it("replaces Demo security and backup controls without removing privacy mode", () => {
+    const privacySecurity = read("src/components/settings/privacy-security.tsx");
+    const demoBranch = between(privacySecurity, "{isDemo ? (", ") : (");
+
+    expect(privacySecurity).toContain("isDemo ? (");
+    expect(demoBranch).toContain('href="/login?from=demo"');
+    expect(demoBranch).toContain('t("demo.exit")');
+    expect(demoBranch).toContain('t("demo.signIn")');
+    expect(demoBranch).toContain('t("demo.temporarySessionTitle")');
+    expect(demoBranch).not.toContain("sessionDescriptionWithEmail");
+    expect(demoBranch).not.toContain("exportBackupAction");
+    expect(privacySecurity).toContain("FormalSessionAndBackupRows");
+    expect(privacySecurity).toContain("PrivacySecurityProps");
+    expect(privacySecurity).toContain("privacyMode, togglePrivacyMode");
+    expect(privacySecurity.indexOf("privacyMode, togglePrivacyMode")).toBeLessThan(
+      privacySecurity.indexOf("{isDemo ? ("),
+    );
+  });
+
+  it("keeps Demo data management free of import controls and fetches", () => {
+    const dataManagement = read("src/components/settings/data-management.tsx");
+    const demoComponent = between(
+      dataManagement,
+      "function DemoDataManagement()",
+      "function FormalDataManagement()",
+    );
+
+    expect(dataManagement).toContain("function DemoDataManagement()");
+    expect(demoComponent).toContain('href="/login?from=demo"');
+    expect(demoComponent).not.toContain('type="file"');
+    expect(demoComponent).not.toContain("fetch(");
+    expect(dataManagement).toContain("function FormalDataManagement()");
+    expect(dataManagement).toContain('type="file"');
+    expect(dataManagement).toContain('fetch("/api/settings/data"');
+  });
+
+  it("propagates Demo state to recurring rules while leaving rule editors mounted", () => {
+    const accountPage = read("src/app/(main)/accounts/[id]/page.tsx");
+    const accountDetail = read("src/components/accounts/account-detail.tsx");
+    const recurringSection = read("src/components/accounts/recurring-section.tsx");
+
+    expect(accountPage).toContain("isDemo={session.user.isDemo}");
+    expect(accountDetail).toContain("isDemo?: boolean;");
+    expect(accountDetail).toContain("isDemo={isDemo}");
+    expect(recurringSection).toContain("isDemo?: boolean;");
+    expect(recurringSection).toContain('t("demoPausedTitle")');
+    expect(recurringSection).toContain('t("demoPausedDescription")');
+    expect(recurringSection).toContain("<RecurringInvestments");
+    expect(recurringSection).toContain("<RecurringCashTransactions");
+  });
+
+  it("provides Demo Settings and recurring explanations in both locales", () => {
+    const en = JSON.parse(read("messages/en-US.json")) as {
+      settings: { demo: Record<string, unknown> };
+      dataManagement: Record<string, unknown>;
+      recurring: Record<string, unknown>;
+    };
+    const zh = JSON.parse(read("messages/zh-TW.json")) as typeof en;
+
+    expect(en.settings.demo.temporarySessionTitle).toBeDefined();
+    expect(en.settings.demo.backupRequiresAccount).toBeDefined();
+    expect(en.dataManagement.demoTitle).toBeDefined();
+    expect(en.dataManagement.demoDescription).toBeDefined();
+    expect(en.dataManagement.demoAction).toBeDefined();
+    expect(en.recurring.demoPausedTitle).toBeDefined();
+    expect(en.recurring.demoPausedDescription).toBeDefined();
+    expect(zh.settings.demo.temporarySessionTitle).toBeDefined();
+    expect(zh.settings.demo.backupRequiresAccount).toBeDefined();
+    expect(zh.dataManagement.demoTitle).toBeDefined();
+    expect(zh.dataManagement.demoDescription).toBeDefined();
+    expect(zh.dataManagement.demoAction).toBeDefined();
+    expect(zh.recurring.demoPausedTitle).toBeDefined();
+    expect(zh.recurring.demoPausedDescription).toContain("可以編輯");
+    expect(zh.recurring.demoPausedDescription).toContain("不會自動執行");
+  });
+
   it("keeps reset, sign-in, confirmation, expiry, and stale-entity recovery in the banner", () => {
     const source = read("src/components/demo/demo-mode-banner.tsx");
 

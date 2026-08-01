@@ -224,6 +224,13 @@
       "yourData": "Your data",
       "yourDataDescription": "Assets Tracker does not connect to your bank or brokerage accounts. Financial records are the entries you add here."
     },
+    "demo": {
+      "temporarySessionTitle": "This Demo is temporary",
+      "temporarySessionDescription": "Demo data is temporary and will expire automatically. Sign in to keep your own data.",
+      "exit": "Exit Demo",
+      "signIn": "Sign in",
+      "backupRequiresAccount": "Backups are available after you sign in to an account."
+    },
     "signOut": "Sign Out",
     "signOutDesc": "Securely log out of your account on this device.",
     "dangerZone": "Danger Zone",
@@ -1142,6 +1149,9 @@
   },
   "dataManagement": {
     "title": "Restore from backup",
+    "demoTitle": "Backups are unavailable in the Demo",
+    "demoDescription": "Demo data is temporary. Sign in to import, export, or restore your own data.",
+    "demoAction": "Sign in to manage data",
     "export": "Export Data",
     "exportDescription": "Download all your accounts, holdings, and transaction history as a JSON file.",
     "import": "Import backup",
@@ -1445,7 +1455,9 @@
   },
   "recurring": {
     "title": "Recurring",
-    "subtitle": "Scheduled buys and cash, posted automatically on each date"
+    "subtitle": "Scheduled buys and cash, posted automatically on each date",
+    "demoPausedTitle": "Automatic recurring execution is paused in the Demo",
+    "demoPausedDescription": "You can still add, edit, and explore recurring rules, but the Demo will not post them automatically."
   },
   "recurringCash": {
     "title": "Recurring",

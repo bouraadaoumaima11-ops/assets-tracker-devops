@@ -224,6 +224,13 @@
       "yourData": "您的資料",
       "yourDataDescription": "資產追蹤器不會連接您的銀行或券商帳戶。財務紀錄是您在此新增的資料。"
     },
+    "demo": {
+      "temporarySessionTitle": "此 Demo 為暫存體驗",
+      "temporarySessionDescription": "Demo 資料為暫存資料，將自動到期。登入後即可保存您自己的資料。",
+      "exit": "離開 Demo",
+      "signIn": "登入",
+      "backupRequiresAccount": "登入帳戶後才能使用備份功能。"
+    },
     "signOut": "登出",
     "signOutDesc": "安全地登出此裝置上的帳戶。",
     "dangerZone": "危險區域",
@@ -1142,6 +1149,9 @@
   },
   "dataManagement": {
     "title": "從備份還原",
+    "demoTitle": "Demo 無法使用備份功能",
+    "demoDescription": "Demo 資料為暫存資料。請登入以匯入、匯出或還原您自己的資料。",
+    "demoAction": "登入以管理資料",
     "export": "匯出資料",
     "exportDescription": "將您的所有帳戶、持倉和交易紀錄下載為 JSON 檔案。",
     "import": "匯入備份",
@@ -1445,7 +1455,9 @@
   },
   "recurring": {
     "title": "週期性",
-    "subtitle": "於每個排定日期自動買入與入帳"
+    "subtitle": "於每個排定日期自動買入與入帳",
+    "demoPausedTitle": "Demo 已暫停自動執行週期性規則",
+    "demoPausedDescription": "您仍可以編輯週期性規則來探索功能，但暫存 Demo 期間系統不會自動執行它們。"
   },
   "recurringCash": {
     "title": "週期性交易",
