@@ -8,15 +8,27 @@ import { recordDemoMetric } from "@/lib/demo/demo-metrics";
 import { consumeDemoMutationQuota, consumeDemoRefreshQuota } from "@/lib/demo/demo-quota-service";
 import { deleteExpiredDemoUser, demoQuotaError } from "@/lib/demo/demo-service";
 import { prisma } from "@/lib/prisma";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForSubject } from "@/lib/rate-limit";
 
 const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export type DemoAccess = "deny" | "allow" | "market-refresh";
+export type DemoMarketDataAccess = "refresh-credit";
+
+type WithAuthOptions = {
+  demo?: DemoAccess;
+  /**
+   * Allows an otherwise-core Demo route to spend a refresh credit before its
+   * handler can call a live market-data provider. This keeps the capability
+   * matrix distinct from the resource budget: stock CRUD/quote remain `allow`,
+   * while their provider work stays DB-authoritatively metered.
+   */
+  marketData?: DemoMarketDataAccess;
+};
 
 export function withAuth<Ctx = unknown>(
   handler: (req: Request, ctx: Ctx, userId: string, principal: AuthPrincipal) => Promise<Response>,
-  options: { demo?: DemoAccess } = {},
+  options: WithAuthOptions = {},
 ) {
   return async (req: Request, ctx: Ctx): Promise<Response> => {
     const session = await auth();
@@ -61,7 +73,7 @@ export function withAuth<Ctx = unknown>(
         }
       }
 
-      if (demoAccess === "market-refresh") {
+      if (demoAccess === "market-refresh" || options.marketData === "refresh-credit") {
         const refreshQuota = await consumeDemoRefreshQuota(prisma, principal.userId, new Date());
         if (!refreshQuota.ok) {
           recordDemoMetric(
@@ -76,7 +88,7 @@ export function withAuth<Ctx = unknown>(
       const limited = rateLimitCheckWithPrune(req, {
         limit: 60,
         prefix: `mutation:${req.method}`,
-        key: principal.userId,
+        key: rateLimitKeyForSubject(principal.userId, `formal-mutation:${req.method}`),
       });
       if (limited) return limited;
     }

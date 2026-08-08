@@ -1,21 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({
-  exportQueries: 0,
-  cspWarnings: 0,
-  principal: { kind: "formal" as const, userId: "user1" } as
-    | { kind: "formal"; userId: string }
-    | { kind: "demo"; userId: string; expiresAt: Date },
-  logError: vi.fn(),
-  logWarn: vi.fn(),
-  yahooSearch: vi.fn(),
-  yahooOptions: vi.fn(),
-  fetchEquityQuote: vi.fn(),
-  warmStockPrice: vi.fn(),
-  tryWarmStockPrice: vi.fn(),
-  refreshTrackedStockPrices: vi.fn(),
-  invalidateStockWatchCaches: vi.fn(),
-}));
+const h = vi.hoisted(() => {
+  const rateLimitCounts = new Map<string, number>();
+  return {
+    exportQueries: 0,
+    cspWarnings: 0,
+    principal: { kind: "formal" as const, userId: "user1" } as
+      | { kind: "formal"; userId: string }
+      | { kind: "demo"; userId: string; expiresAt: Date },
+    logError: vi.fn(),
+    logWarn: vi.fn(),
+    yahooSearch: vi.fn(),
+    yahooOptions: vi.fn(),
+    fetchEquityQuote: vi.fn(),
+    warmStockPrice: vi.fn(),
+    tryWarmStockPrice: vi.fn(),
+    cacheEquityQuote: vi.fn(),
+    tryCacheEquityQuote: vi.fn(),
+    refreshTrackedStockPrices: vi.fn(),
+    invalidateStockWatchCaches: vi.fn(),
+    rateLimitCounts,
+    rateLimitCheckWithPrune: vi.fn(
+      (
+        request: Request,
+        options: { limit: number; prefix?: string; key?: string },
+      ): Response | null => {
+        const key = `${options.prefix ?? "rl"}:${options.key ?? request.headers.get("x-forwarded-for") ?? "unknown"}`;
+        const count = (rateLimitCounts.get(key) ?? 0) + 1;
+        rateLimitCounts.set(key, count);
+        return count > options.limit ? new Response(null, { status: 429 }) : null;
+      },
+    ),
+    rateLimitKeyForClientIp: vi.fn(() => "hmac:formal-quote-ip"),
+    rateLimitKeyForSubject: vi.fn(() => "hmac:demo-quote-subject"),
+  };
+});
 
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
@@ -51,6 +70,12 @@ vi.mock("@/lib/api-handler", () => ({
     },
 }));
 
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimitCheckWithPrune: h.rateLimitCheckWithPrune,
+  rateLimitKeyForClientIp: h.rateLimitKeyForClientIp,
+  rateLimitKeyForSubject: h.rateLimitKeyForSubject,
+}));
+
 vi.mock("@/lib/logger", () => ({
   log: {
     debug: vi.fn(),
@@ -78,6 +103,8 @@ vi.mock("@/lib/services/stock-watch-service", () => ({
   fetchEquityQuote: h.fetchEquityQuote,
   warmStockPrice: h.warmStockPrice,
   tryWarmStockPrice: h.tryWarmStockPrice,
+  cacheEquityQuote: h.cacheEquityQuote,
+  tryCacheEquityQuote: h.tryCacheEquityQuote,
   refreshTrackedStockPrices: h.refreshTrackedStockPrices,
   invalidateStockWatchCaches: h.invalidateStockWatchCaches,
   getCachedTrackedStocks: vi.fn(async () => []),
@@ -138,7 +165,17 @@ describe("rate-limited routes", () => {
       updatedAt: "2026-08-01T00:00:00.000Z",
     });
     h.tryWarmStockPrice.mockResolvedValue(null);
+    h.cacheEquityQuote.mockResolvedValue({
+      price: 200,
+      currency: "USD",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    });
+    h.tryCacheEquityQuote.mockResolvedValue(null);
     h.refreshTrackedStockPrices.mockResolvedValue({ updated: 1, changed: 1 });
+    h.rateLimitCounts.clear();
+    h.rateLimitCheckWithPrune.mockClear();
+    h.rateLimitKeyForClientIp.mockClear();
+    h.rateLimitKeyForSubject.mockClear();
   });
 
   it("limits data export by authenticated user before export queries", async () => {
@@ -176,7 +213,7 @@ describe("rate-limited routes", () => {
     });
   });
 
-  it("passes redacted logging options through Demo watch create and quote", async () => {
+  it("reuses the fetched Demo quote for cache warming instead of requesting the provider twice", async () => {
     h.principal = {
       kind: "demo",
       userId: "user1",
@@ -205,8 +242,44 @@ describe("rate-limited routes", () => {
     expect(created.status).toBe(201);
     expect(quoted.status).toBe(200);
     expect(h.fetchEquityQuote).toHaveBeenCalledWith("AAPL", { redactIdentifiers: true });
-    expect(h.tryWarmStockPrice).toHaveBeenCalledWith("AAPL", { redactIdentifiers: true });
-    expect(h.warmStockPrice).toHaveBeenCalledWith("AAPL", { redactIdentifiers: true });
+    expect(h.tryCacheEquityQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "AAPL", price: 200 }),
+      { redactIdentifiers: true },
+    );
+    expect(h.cacheEquityQuote).toHaveBeenCalledWith(
+      expect.objectContaining({ symbol: "AAPL", price: 200 }),
+    );
+    expect(h.tryWarmStockPrice).not.toHaveBeenCalled();
+    expect(h.warmStockPrice).not.toHaveBeenCalled();
+  });
+
+  it("keys the Demo quote limiter with an opaque, purpose-separated principal token", async () => {
+    h.principal = {
+      kind: "demo",
+      userId: "user1",
+      expiresAt: new Date("2026-08-02T00:00:00.000Z"),
+    };
+    const { GET } = await import("@/app/api/stocks/quote/route");
+
+    const response = await GET(
+      request("http://unit.test/api/stocks/quote?symbol=AAPL", {
+        headers: { "x-forwarded-for": "DEMO_QUOTE_IP_SENTINEL" },
+      }),
+      undefined,
+    );
+
+    expect(response.status).toBe(200);
+    expect(h.rateLimitKeyForSubject).toHaveBeenCalledWith("user1", "public-demo-stocks-quote");
+    expect(h.rateLimitCheckWithPrune).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        prefix: "stocks-quote",
+        key: "hmac:demo-quote-subject",
+      }),
+    );
+    expect(JSON.stringify(h.rateLimitCheckWithPrune.mock.calls)).not.toContain(
+      "DEMO_QUOTE_IP_SENTINEL",
+    );
   });
 
   it("passes redacted logging options through Demo tracked-stock refresh", async () => {

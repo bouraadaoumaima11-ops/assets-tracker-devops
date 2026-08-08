@@ -14,7 +14,7 @@ import { serializeCalendarEntry } from "@/lib/types";
 import { ok, failure, validationError } from "@/lib/api-responses";
 import { withAuth } from "@/lib/api-handler";
 import { log } from "@/lib/logger";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForSubject } from "@/lib/rate-limit";
 
 const MISSING_ACCOUNT_GOAL_MESSAGE =
   "Import backup contains an account-scoped goal that references a missing account.";
@@ -272,7 +272,7 @@ export const GET = withAuth(
       const limited = rateLimitCheckWithPrune(request, {
         limit: 5,
         prefix: "settings-export",
-        key: userId,
+        key: rateLimitKeyForSubject(userId, "settings-export"),
       });
       if (limited) return limited;
 
@@ -342,7 +342,7 @@ export const POST = withAuth(
       const limited = rateLimitCheckWithPrune(request, {
         limit: 5,
         prefix: "settings-import",
-        key: userId,
+        key: rateLimitKeyForSubject(userId, "settings-import"),
       });
       if (limited) return limited;
 

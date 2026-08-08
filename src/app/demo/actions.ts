@@ -16,7 +16,11 @@ import { createDemoLoginTicket } from "@/lib/demo/demo-crypto";
 import { PublicDemoError, type DemoErrorCode } from "@/lib/demo/demo-errors";
 import { ensureDemoWorkspace, resetDemoWorkspace } from "@/lib/demo/demo-service";
 import { getAuthContext } from "@/lib/auth-session";
-import { getClientIpFromHeaders, rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import {
+  getClientIpFromHeaders,
+  rateLimitCheckWithPrune,
+  rateLimitKeyForClientIp,
+} from "@/lib/rate-limit";
 
 export type DemoActionState = {
   errorCode: DemoErrorCode | null;
@@ -38,6 +42,7 @@ export async function startPublicDemoAction(
   const limited = rateLimitCheckWithPrune(syntheticRequest, {
     limit: 10,
     prefix: "public-demo-start",
+    key: rateLimitKeyForClientIp(syntheticRequest, "public-demo-start"),
   });
   if (limited) {
     const retryAfter = limited.headers.get("Retry-After");

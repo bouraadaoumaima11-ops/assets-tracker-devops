@@ -15,6 +15,14 @@ import { invalidateScopedTag } from "@/lib/demo/demo-cache";
 
 type MarketLogOptions = { redactIdentifiers?: boolean };
 
+export type EquityQuote = {
+  symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  price: number;
+};
+
 export type SerializedStockWatchItem = {
   id: string;
   userId: string;
@@ -127,13 +135,7 @@ export function invalidateStockWatchCaches(userId: string, principal: AuthPrinci
 export async function fetchEquityQuote(
   symbol: string,
   options: MarketLogOptions = {},
-): Promise<{
-  symbol: string;
-  name: string;
-  exchange: string;
-  currency: string;
-  price: number;
-} | null> {
+): Promise<EquityQuote | null> {
   const normalized = symbol.toUpperCase();
   let quote;
   try {
@@ -165,6 +167,31 @@ export async function fetchEquityQuote(
   };
 }
 
+/** Persist an already-fetched quote without making another provider request. */
+export async function cacheEquityQuote(quote: EquityQuote): Promise<{
+  price: number;
+  currency: string;
+  updatedAt: string;
+}> {
+  const cached = await prisma.priceCache.upsert({
+    where: { symbol: quote.symbol.toUpperCase() },
+    update: { price: quote.price, currency: quote.currency, updatedAt: new Date() },
+    create: {
+      symbol: quote.symbol.toUpperCase(),
+      price: quote.price,
+      currency: quote.currency,
+    },
+    select: { price: true, currency: true, updatedAt: true },
+  });
+  revalidateTag("prices", "max");
+
+  return {
+    price: Number(cached.price),
+    currency: cached.currency,
+    updatedAt: cached.updatedAt.toISOString(),
+  };
+}
+
 export async function warmStockPrice(
   symbol: string,
   options: MarketLogOptions = {},
@@ -190,22 +217,7 @@ export async function warmStockPrice(
   }
 
   const quote = await fetchEquityQuote(normalized, options);
-  const result = quote ? { price: quote.price, currency: quote.currency } : null;
-  if (!result) return null;
-
-  const cached = await prisma.priceCache.upsert({
-    where: { symbol: normalized },
-    update: { price: result.price, currency: result.currency, updatedAt: new Date() },
-    create: { symbol: normalized, price: result.price, currency: result.currency },
-    select: { price: true, currency: true, updatedAt: true },
-  });
-  revalidateTag("prices", "max");
-
-  return {
-    price: Number(cached.price),
-    currency: cached.currency,
-    updatedAt: cached.updatedAt.toISOString(),
-  };
+  return quote ? cacheEquityQuote(quote) : null;
 }
 
 export async function refreshTrackedStockPrices(
@@ -235,6 +247,23 @@ export async function tryWarmStockPrice(symbol: string, options: MarketLogOption
             errorType: error instanceof Error ? error.name : "unknown",
           }
         : { symbol, error: String(error) },
+    );
+    return null;
+  }
+}
+
+export async function tryCacheEquityQuote(quote: EquityQuote, options: MarketLogOptions = {}) {
+  try {
+    return await cacheEquityQuote(quote);
+  } catch (error) {
+    log.warn(
+      "stocks.price_cache.failed",
+      options.redactIdentifiers
+        ? {
+            operation: "cache-stock-price",
+            errorType: error instanceof Error ? error.name : "unknown",
+          }
+        : { symbol: quote.symbol, error: String(error) },
     );
     return null;
   }

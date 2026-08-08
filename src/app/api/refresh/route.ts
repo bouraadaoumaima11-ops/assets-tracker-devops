@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { withAuth } from "@/lib/api-handler";
 import { refreshPricesForUser } from "@/lib/services/price-service";
 import { refreshExchangeRates } from "@/lib/services/exchange-rate-service";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForSubject } from "@/lib/rate-limit";
 import { ok } from "@/lib/api-responses";
 
 /**
@@ -20,7 +20,7 @@ export const POST = withAuth(
     const limited = rateLimitCheckWithPrune(request, {
       limit: 5,
       prefix: "market-refresh",
-      key: userId,
+      key: rateLimitKeyForSubject(userId, "market-refresh"),
     });
     if (limited) return limited;
 

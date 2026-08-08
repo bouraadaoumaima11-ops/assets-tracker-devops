@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { ok, failure } from "@/lib/api-responses";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForClientIp } from "@/lib/rate-limit";
 import { getYahooClient, getYahooErrorStatus } from "@/lib/services/yahoo-client";
 import { log } from "@/lib/logger";
 
@@ -121,7 +121,11 @@ const cachedYahooSearch = unstable_cache(
 );
 
 export async function GET(request: Request) {
-  const limited = rateLimitCheckWithPrune(request, { limit: 60, prefix: "search" });
+  const limited = rateLimitCheckWithPrune(request, {
+    limit: 60,
+    prefix: "search",
+    key: rateLimitKeyForClientIp(request, "search"),
+  });
   if (limited) return limited;
 
   const { searchParams } = new URL(request.url);

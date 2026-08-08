@@ -4,6 +4,7 @@ import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 type DemoPolicy = "allow" | "deny" | "market-refresh";
+type MarketDataPolicy = "refresh-credit";
 
 const expectedPolicies: Record<string, Record<string, DemoPolicy>> = {
   "src/app/api/accounts/[id]/cash-transactions/route.ts": { POST: "allow" },
@@ -108,6 +109,47 @@ function readPolicies(path: string): Record<string, DemoPolicy | undefined> | un
   return policies;
 }
 
+function readMarketDataPolicies(
+  path: string,
+): Record<string, MarketDataPolicy | undefined> | undefined {
+  const source = readFileSync(path, "utf8");
+  if (!source.includes('from "@/lib/api-handler"')) return undefined;
+
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const policies: Record<string, MarketDataPolicy | undefined> = {};
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    if (!statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+      continue;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        !/^(GET|POST|PATCH|DELETE|PUT)$/.test(declaration.name.text)
+      ) {
+        continue;
+      }
+      const initializer = declaration.initializer;
+      if (!initializer || !ts.isCallExpression(initializer)) continue;
+      if (!ts.isIdentifier(initializer.expression) || initializer.expression.text !== "withAuth") {
+        continue;
+      }
+      const options = initializer.arguments[1];
+      if (!options || !ts.isObjectLiteralExpression(options)) continue;
+      const marketData = options.properties.find(
+        (property): property is ts.PropertyAssignment =>
+          ts.isPropertyAssignment(property) &&
+          ((ts.isIdentifier(property.name) && property.name.text === "marketData") ||
+            (ts.isStringLiteral(property.name) && property.name.text === "marketData")),
+      );
+      if (marketData && ts.isStringLiteral(marketData.initializer)) {
+        policies[declaration.name.text] = marketData.initializer.text as MarketDataPolicy;
+      }
+    }
+  }
+  return policies;
+}
+
 function readFunction(path: string, functionName: string): string {
   const source = readFileSync(path, "utf8");
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
@@ -132,6 +174,22 @@ describe("public Demo route policy", () => {
     );
 
     expect(actual).toEqual(expectedPolicies);
+  });
+
+  it("requires a database refresh credit for every Demo route that performs a live stock lookup", () => {
+    const actual = Object.fromEntries(
+      routeFiles(join(process.cwd(), "src/app/api"))
+        .map((path) => [relative(process.cwd(), path), readMarketDataPolicies(path)] as const)
+        .filter((entry): entry is readonly [string, Record<string, MarketDataPolicy | undefined>] =>
+          Boolean(entry[1]),
+        )
+        .filter(([, policies]) => Object.keys(policies).length > 0),
+    );
+
+    expect(actual).toEqual({
+      "src/app/api/stocks/quote/route.ts": { GET: "refresh-credit" },
+      "src/app/api/stocks/route.ts": { POST: "refresh-credit" },
+    });
   });
 
   it.each([

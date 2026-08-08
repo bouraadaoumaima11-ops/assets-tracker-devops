@@ -6,8 +6,8 @@ import {
   DEMO_VISITOR_COOKIE,
   isValidDemoVisitorToken,
 } from "@/lib/demo/demo-policy";
-import { isPublicDemoEnabled } from "@/lib/env";
-import { getClientIp } from "@/lib/rate-limit";
+import { AUTH_SECRET, isPublicDemoEnabled } from "@/lib/env";
+import { getClientIp } from "@/lib/client-ip";
 import { NextResponse } from "next/server";
 import type { NextFetchEvent, NextRequest } from "next/server";
 
@@ -113,16 +113,34 @@ function _authRLMaybePrune(now: number): void {
   }
 }
 
-function _authRateLimit(request: Request): Response | null {
-  const ip = getClientIp(request);
+async function _authRateLimitKey(request: Request): Promise<string> {
+  const signingKey = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(AUTH_SECRET),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    signingKey,
+    new TextEncoder().encode(`asset-tracker/auth-rate-limit/v1\u0000${getClientIp(request)}`),
+  );
+  return Array.from(new Uint8Array(signature), (value) => value.toString(16).padStart(2, "0")).join(
+    "",
+  );
+}
+
+async function _authRateLimit(request: Request): Promise<Response | null> {
+  const key = await _authRateLimitKey(request);
   const now = Date.now();
   _authRLMaybePrune(now);
   const windowMs = 60_000;
   const limit = 20;
-  const entry = _authRLStore.get(ip);
+  const entry = _authRLStore.get(key);
 
   if (!entry || now >= entry.resetAt) {
-    _authRLStore.set(ip, { count: 1, resetAt: now + windowMs });
+    _authRLStore.set(key, { count: 1, resetAt: now + windowMs });
     return null;
   }
   entry.count += 1;
@@ -199,9 +217,7 @@ export default function middleware(req: NextRequest, event: NextFetchEvent) {
 
   // Rate-limit auth callbacks before any NextAuth processing.
   if (req.nextUrl.pathname.startsWith("/api/auth")) {
-    const limited = _authRateLimit(req);
-    if (limited) return limited;
-    return;
+    return _authRateLimit(req).then((limited) => limited ?? undefined);
   }
 
   // Bot probes get routing's own 404 rather than a /login redirect, and never

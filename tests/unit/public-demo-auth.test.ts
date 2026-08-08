@@ -28,6 +28,7 @@ const h = vi.hoisted(() => ({
     throw new Error(`NEXT_REDIRECT:${destination}`);
   }),
   rateLimitCheckWithPrune: vi.fn(),
+  rateLimitKeyForClientIp: vi.fn(() => "hmac:public-demo-start"),
   getClientIpFromHeaders: vi.fn(() => "203.0.113.7"),
   ensureDemoWorkspace: vi.fn(),
   createDemoLoginTicket: vi.fn(() => "signed-demo-ticket"),
@@ -69,6 +70,7 @@ vi.mock("@/lib/demo/demo-crypto", () => ({
 vi.mock("@/lib/auth-session", () => ({ getAuthContext: h.getAuthContext }));
 vi.mock("@/lib/rate-limit", () => ({
   getClientIpFromHeaders: h.getClientIpFromHeaders,
+  rateLimitKeyForClientIp: h.rateLimitKeyForClientIp,
   rateLimitCheckWithPrune: h.rateLimitCheckWithPrune,
 }));
 vi.mock("next/headers", () => ({
@@ -230,6 +232,7 @@ describe("startPublicDemoAction", () => {
     h.cookieSet.mockReset();
     h.redirect.mockClear();
     h.rateLimitCheckWithPrune.mockReset().mockReturnValue(null);
+    h.rateLimitKeyForClientIp.mockClear();
     h.getClientIpFromHeaders.mockClear();
     h.ensureDemoWorkspace.mockReset().mockResolvedValue({
       userId: "demo-user",
@@ -353,6 +356,28 @@ describe("startPublicDemoAction", () => {
     expect(h.cookieGet).not.toHaveBeenCalled();
     expect(h.ensureDemoWorkspace).not.toHaveBeenCalled();
     expect(h.signIn).not.toHaveBeenCalled();
+  });
+
+  it("keys Demo-start limiting with an opaque token rather than the forwarded IP", async () => {
+    h.requestHeaders = new Headers({ "x-forwarded-for": "DEMO_START_IP_SENTINEL" });
+    const startPublicDemoAction = await loadStartAction();
+
+    await startPublicDemoAction({ errorCode: null }, new FormData());
+
+    expect(h.rateLimitKeyForClientIp).toHaveBeenCalledWith(
+      expect.any(Request),
+      "public-demo-start",
+    );
+    expect(h.rateLimitCheckWithPrune).toHaveBeenCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        prefix: "public-demo-start",
+        key: "hmac:public-demo-start",
+      }),
+    );
+    expect(JSON.stringify(h.rateLimitCheckWithPrune.mock.calls)).not.toContain(
+      "DEMO_START_IP_SENTINEL",
+    );
   });
 
   it("returns stable service errors without exposing the ticket or visitor identity", async () => {

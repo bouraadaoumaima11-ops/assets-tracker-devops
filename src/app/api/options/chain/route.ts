@@ -1,5 +1,5 @@
 import { ok } from "@/lib/api-responses";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForClientIp } from "@/lib/rate-limit";
 import { getYahooClient } from "@/lib/services/yahoo-client";
 import { log } from "@/lib/logger";
 
@@ -32,7 +32,11 @@ const slim = (arr: any[] | undefined): ChainContract[] =>
   }));
 
 export async function GET(request: Request) {
-  const limited = rateLimitCheckWithPrune(request, { limit: 60, prefix: "options-chain" });
+  const limited = rateLimitCheckWithPrune(request, {
+    limit: 60,
+    prefix: "options-chain",
+    key: rateLimitKeyForClientIp(request, "options-chain"),
+  });
   if (limited) return limited;
 
   const { searchParams } = new URL(request.url);

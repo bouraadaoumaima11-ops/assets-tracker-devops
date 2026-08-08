@@ -8,7 +8,7 @@ import {
   getCachedTrackedStocks,
   invalidateStockWatchCaches,
   serializeStockWatchItem,
-  tryWarmStockPrice,
+  tryCacheEquityQuote,
 } from "@/lib/services/stock-watch-service";
 
 export const GET = withAuth(
@@ -78,9 +78,9 @@ export const POST = withAuth(
       throw error;
     }
 
-    await tryWarmStockPrice(item.symbol, marketLogOptions);
+    await tryCacheEquityQuote(quote, marketLogOptions);
     invalidateStockWatchCaches(userId, principal);
     return ok(serializeStockWatchItem(item), { status: 201 });
   },
-  { demo: "allow" },
+  { demo: "allow", marketData: "refresh-credit" },
 );

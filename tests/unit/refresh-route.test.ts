@@ -29,7 +29,10 @@ vi.mock("@/lib/api-handler", () => ({
     (request: Request, context: unknown) =>
       handler(request, context, "user-1", h.principal),
 }));
-vi.mock("@/lib/rate-limit", () => ({ rateLimitCheckWithPrune: vi.fn(() => null) }));
+vi.mock("@/lib/rate-limit", () => ({
+  rateLimitCheckWithPrune: vi.fn(() => null),
+  rateLimitKeyForSubject: vi.fn(() => "hmac:market-refresh"),
+}));
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     setting: { findUnique: vi.fn(async () => ({ baseCurrency: "USD" })) },

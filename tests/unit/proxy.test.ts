@@ -21,6 +21,7 @@ vi.mock("@/auth", () => ({ auth: mocks.authMock }));
 vi.mock("@/lib/auth-principal", () => ({ resolvePrincipal: mocks.resolvePrincipalMock }));
 vi.mock("next/headers", () => ({ headers: mocks.headersMock }));
 vi.mock("@/lib/env", () => ({
+  AUTH_SECRET: "proxy-unit-secret",
   get isPublicDemoEnabled() {
     return mocks.publicDemoEnabled;
   },
@@ -51,7 +52,7 @@ function executeAuthenticatedRequest(pathname: string, isDemo: boolean): Respons
       user: {
         id: isDemo ? "demo-user" : "formal-user",
         isDemo,
-        demoExpiresAt: isDemo ? "2026-08-02T00:00:00.000Z" : null,
+        demoExpiresAt: isDemo ? "2099-08-02T00:00:00.000Z" : null,
       },
     },
   });
@@ -351,7 +352,7 @@ describe("getSession identity source (#639)", () => {
 });
 
 describe("auth proxy rate limiter", () => {
-  it("prunes expired IP windows lazily", () => {
+  it("prunes expired opaque IP windows lazily without retaining forwarding values", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-06T00:00:00.000Z"));
     const deleteSpy = vi.spyOn(Map.prototype, "delete");
@@ -359,15 +360,17 @@ describe("auth proxy rate limiter", () => {
     const first = new NextRequest("https://astt.app/api/auth/session", {
       headers: { "x-forwarded-for": "198.51.100.1" },
     });
-    expect(proxy(first, {} as NextFetchEvent)).toBeUndefined();
+    expect(await proxy(first, {} as NextFetchEvent)).toBeUndefined();
 
     vi.setSystemTime(new Date("2026-07-06T00:01:01.000Z"));
     const second = new NextRequest("https://astt.app/api/auth/session", {
       headers: { "x-forwarded-for": "198.51.100.2" },
     });
-    expect(proxy(second, {} as NextFetchEvent)).toBeUndefined();
+    expect(await proxy(second, {} as NextFetchEvent)).toBeUndefined();
 
-    expect(deleteSpy).toHaveBeenCalledWith("198.51.100.1");
+    expect(deleteSpy).toHaveBeenCalled();
+    expect(JSON.stringify(deleteSpy.mock.calls)).not.toContain("198.51.100.1");
+    expect(JSON.stringify(deleteSpy.mock.calls)).not.toContain("198.51.100.2");
 
     deleteSpy.mockRestore();
     vi.useRealTimers();

@@ -1,6 +1,6 @@
 import { withAuth } from "@/lib/api-handler";
 import { ok } from "@/lib/api-responses";
-import { rateLimitCheckWithPrune } from "@/lib/rate-limit";
+import { rateLimitCheckWithPrune, rateLimitKeyForSubject } from "@/lib/rate-limit";
 import { refreshTrackedStockPrices } from "@/lib/services/stock-watch-service";
 
 export const POST = withAuth(
@@ -10,7 +10,7 @@ export const POST = withAuth(
     const limited = rateLimitCheckWithPrune(request, {
       limit: 10,
       prefix: "stocks-refresh",
-      key: userId,
+      key: rateLimitKeyForSubject(userId, "stocks-refresh"),
     });
     if (limited) return limited;
 
