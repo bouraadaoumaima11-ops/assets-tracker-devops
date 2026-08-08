@@ -51,8 +51,12 @@ vi.mock("@/lib/api-handler", () => ({
         ctx: unknown,
         userId: string,
         principal: typeof h.principal,
+        consumeRefreshCredit?: () => Promise<Response | null>,
       ) => Promise<Response>,
-      options: { demo?: "allow" | "deny" | "market-refresh" } = {},
+      options: {
+        demo?: "allow" | "deny" | "market-refresh";
+        marketData?: "refresh-credit";
+      } = {},
     ) =>
     (req: Request, ctx: unknown) => {
       if (h.principal.kind === "demo" && (options.demo ?? "deny") === "deny") {
@@ -66,7 +70,13 @@ vi.mock("@/lib/api-handler", () => ({
           { status: 403 },
         );
       }
-      return handler(req, ctx, "user1", h.principal);
+      return handler(
+        req,
+        ctx,
+        "user1",
+        h.principal,
+        options.marketData === "refresh-credit" ? async () => null : undefined,
+      );
     },
 }));
 

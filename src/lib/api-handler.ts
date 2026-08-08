@@ -14,20 +14,27 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export type DemoAccess = "deny" | "allow" | "market-refresh";
 export type DemoMarketDataAccess = "refresh-credit";
+export type MarketDataRefreshCredit = () => Promise<Response | null>;
 
 type WithAuthOptions = {
   demo?: DemoAccess;
   /**
-   * Allows an otherwise-core Demo route to spend a refresh credit before its
-   * handler can call a live market-data provider. This keeps the capability
-   * matrix distinct from the resource budget: stock CRUD/quote remain `allow`,
-   * while their provider work stays DB-authoritatively metered.
+   * Gives an otherwise-core Demo route a capability to spend a refresh credit
+   * immediately before it calls a live market-data provider. This keeps the
+   * capability matrix distinct from the resource budget: stock CRUD/quote
+   * remain `allow`, while their provider work stays DB-authoritatively metered.
    */
   marketData?: DemoMarketDataAccess;
 };
 
 export function withAuth<Ctx = unknown>(
-  handler: (req: Request, ctx: Ctx, userId: string, principal: AuthPrincipal) => Promise<Response>,
+  handler: (
+    req: Request,
+    ctx: Ctx,
+    userId: string,
+    principal: AuthPrincipal,
+    consumeMarketDataRefreshCredit?: MarketDataRefreshCredit,
+  ) => Promise<Response>,
   options: WithAuthOptions = {},
 ) {
   return async (req: Request, ctx: Ctx): Promise<Response> => {
@@ -73,16 +80,9 @@ export function withAuth<Ctx = unknown>(
         }
       }
 
-      if (demoAccess === "market-refresh" || options.marketData === "refresh-credit") {
-        const refreshQuota = await consumeDemoRefreshQuota(prisma, principal.userId, new Date());
-        if (!refreshQuota.ok) {
-          recordDemoMetric(
-            refreshQuota.reason === "expired" || refreshQuota.reason === "missing"
-              ? "expired"
-              : "rate_limited",
-          );
-          return demoErrorResponse(demoQuotaError(refreshQuota));
-        }
+      if (demoAccess === "market-refresh") {
+        const limited = await consumeMarketDataRefreshCredit(principal);
+        if (limited) return limited;
       }
     } else if (mutation) {
       const limited = rateLimitCheckWithPrune(req, {
@@ -93,6 +93,26 @@ export function withAuth<Ctx = unknown>(
       if (limited) return limited;
     }
 
-    return handler(req, ctx, principal.userId, principal);
+    const refreshCredit =
+      options.marketData === "refresh-credit"
+        ? () => consumeMarketDataRefreshCredit(principal)
+        : undefined;
+    return refreshCredit
+      ? handler(req, ctx, principal.userId, principal, refreshCredit)
+      : handler(req, ctx, principal.userId, principal);
   };
+}
+
+async function consumeMarketDataRefreshCredit(principal: AuthPrincipal): Promise<Response | null> {
+  if (principal.kind !== "demo") return null;
+
+  const refreshQuota = await consumeDemoRefreshQuota(prisma, principal.userId, new Date());
+  if (refreshQuota.ok) return null;
+
+  recordDemoMetric(
+    refreshQuota.reason === "expired" || refreshQuota.reason === "missing"
+      ? "expired"
+      : "rate_limited",
+  );
+  return demoErrorResponse(demoQuotaError(refreshQuota));
 }

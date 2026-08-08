@@ -20,7 +20,7 @@ export const GET = withAuth(
 );
 
 export const POST = withAuth(
-  async (request, _ctx, userId, principal) => {
+  async (request, _ctx, userId, principal, consumeRefreshCredit) => {
     const body = await request.json();
     const parsed = createStockWatchItemSchema.safeParse(body);
     if (!parsed.success) return validationError(parsed.error);
@@ -32,6 +32,10 @@ export const POST = withAuth(
       select: { id: true },
     });
     if (existing) return failure("This stock is already tracked.", 409);
+
+    if (!consumeRefreshCredit) return failure("Market data access is unavailable", 500);
+    const limitedRefresh = await consumeRefreshCredit();
+    if (limitedRefresh) return limitedRefresh;
 
     const quote = await fetchEquityQuote(symbol, marketLogOptions);
     if (!quote) return failure("Only stock symbols can be tracked.", 400);

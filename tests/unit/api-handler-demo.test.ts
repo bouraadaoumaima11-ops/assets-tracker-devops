@@ -93,13 +93,46 @@ describe("withAuth public Demo policy", () => {
     expect(mocks.consumeRefresh).not.toHaveBeenCalled();
   });
 
-  it("requires a database refresh credit before an allowed Demo route can run live market work", async () => {
+  it("gives a market-data route a refresh-credit capability without spending it before validation", async () => {
     mocks.consumeRefresh.mockResolvedValue({
       ok: false,
       reason: "rate",
       retryAfterSeconds: 23,
     });
-    const handler = vi.fn(async () => new Response(null, { status: 204 }));
+    let refreshCredit: unknown;
+    const handler = vi.fn(async (...args: unknown[]) => {
+      refreshCredit = args[4];
+      return new Response(null, { status: 204 });
+    });
+
+    const response = await withAuth(handler, {
+      demo: "allow",
+      marketData: "refresh-credit",
+    })(request(), undefined);
+
+    expect(response.status).toBe(204);
+    expect(handler).toHaveBeenCalledOnce();
+    expect(refreshCredit).toBeTypeOf("function");
+    expect(mocks.consumeMutation).not.toHaveBeenCalled();
+    expect(mocks.consumeRefresh).not.toHaveBeenCalled();
+  });
+
+  it("returns a quota response from the refresh-credit capability before provider work", async () => {
+    mocks.consumeRefresh.mockResolvedValue({
+      ok: false,
+      reason: "rate",
+      retryAfterSeconds: 23,
+    });
+    let providerCalled = false;
+    const handler = vi.fn(async (...args: unknown[]) => {
+      const refreshCredit = args[4] as undefined | (() => Promise<Response | null>);
+      if (typeof refreshCredit !== "function")
+        return new Response("missing capability", { status: 500 });
+      const limited = await refreshCredit();
+      if (limited) return limited;
+      providerCalled = true;
+      return new Response(null, { status: 204 });
+    });
 
     const response = await withAuth(handler, {
       demo: "allow",
@@ -111,8 +144,8 @@ describe("withAuth public Demo policy", () => {
     await expect(errorBody(response)).resolves.toEqual({
       error: { code: "DEMO_RATE_LIMITED", message: "Public Demo rate limit reached" },
     });
-    expect(handler).not.toHaveBeenCalled();
-    expect(mocks.consumeMutation).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+    expect(providerCalled).toBe(false);
     expect(mocks.consumeRefresh).toHaveBeenCalledWith(
       { quotaDb: true },
       "demo-user",
@@ -158,8 +191,10 @@ describe("withAuth public Demo policy", () => {
     );
   });
 
-  it("keeps the normal mutation charge alongside an allowed route's live market credit", async () => {
-    const handler = vi.fn(async () => {
+  it("keeps the mutation charge ahead of a Demo route's deferred live-market credit", async () => {
+    let refreshCredit: unknown;
+    const handler = vi.fn(async (...args: unknown[]) => {
+      refreshCredit = args[4];
       mocks.order.push("handler");
       return new Response(null, { status: 204 });
     });
@@ -170,7 +205,9 @@ describe("withAuth public Demo policy", () => {
     })(request("POST"), undefined);
 
     expect(response.status).toBe(204);
-    expect(mocks.order).toEqual(["mutation", "refresh", "handler"]);
+    expect(mocks.order).toEqual(["mutation", "handler"]);
+    expect(refreshCredit).toBeTypeOf("function");
+    expect(mocks.consumeRefresh).not.toHaveBeenCalled();
   });
 
   it("returns the shared coded quota response with Retry-After and skips the handler", async () => {

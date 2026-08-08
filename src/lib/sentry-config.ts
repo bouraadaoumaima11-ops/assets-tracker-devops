@@ -1,4 +1,4 @@
-import type { ErrorEvent, EventHint } from "@sentry/nextjs";
+import type { ErrorEvent, EventHint, init as sentryInit } from "@sentry/nextjs";
 
 const REDACTED = "[Filtered]";
 
@@ -53,6 +53,11 @@ const HIGH_NOISE_WARNING_MESSAGES = new Set([
   "rates.unresolved",
 ]);
 
+type SentryOptions = Parameters<typeof sentryInit>[0];
+type TransactionEvent = Parameters<NonNullable<SentryOptions["beforeSendTransaction"]>>[0];
+type SpanJSON = Parameters<NonNullable<SentryOptions["beforeSendSpan"]>>[0];
+type SanitizableEvent = ErrorEvent | TransactionEvent;
+
 type SentryRuntime = "nodejs" | "edge" | "browser";
 
 export function getSentryEnvironment(): string {
@@ -83,18 +88,44 @@ export function beforeSend(event: ErrorEvent, _hint: EventHint): ErrorEvent | nu
   return event;
 }
 
+/** Apply the same privacy boundary to trace transactions as error events. */
+export function beforeSendTransaction(
+  event: TransactionEvent,
+  _hint: EventHint,
+): TransactionEvent | null {
+  sanitizeEvent(event);
+  return event;
+}
+
+/**
+ * Sentry invokes this hook for standalone spans, which do not pass through a
+ * transaction event in streamed and Edge transports.
+ */
+export function beforeSendSpan(span: SpanJSON): SpanJSON {
+  const sanitizableSpan = span as SpanJSON & { attributes?: unknown };
+  sanitizableSpan.description = redactMessage(sanitizableSpan.description);
+  sanitizableSpan.data = sanitizeUnknown(sanitizableSpan.data) as SpanJSON["data"];
+  if (sanitizableSpan.attributes !== undefined) {
+    sanitizableSpan.attributes = sanitizeUnknown(sanitizableSpan.attributes);
+  }
+  return sanitizableSpan;
+}
+
 function getEventMessage(event: ErrorEvent): string {
   return event.message ?? event.logentry?.message ?? getStringValue(event.extra?.msg) ?? "";
 }
 
-function sanitizeEvent(event: ErrorEvent): void {
+function sanitizeEvent(event: SanitizableEvent): void {
   event.message = redactMessage(event.message);
   if (event.logentry) {
-    event.logentry = {
-      ...event.logentry,
-      message: redactMessage(event.logentry.message),
-      params: event.logentry.params?.map(() => REDACTED),
+    const logentry = event.logentry as typeof event.logentry & { formatted?: string };
+    const sanitizedLogentry = {
+      ...logentry,
+      formatted: redactMessage(logentry.formatted),
+      message: redactMessage(logentry.message),
+      params: logentry.params?.map(() => REDACTED),
     };
+    event.logentry = sanitizedLogentry as ErrorEvent["logentry"];
   }
   if (event.exception?.values) {
     event.exception = {
@@ -132,15 +163,15 @@ function sanitizeEvent(event: ErrorEvent): void {
   event.extra = sanitizeUnknown(event.extra) as ErrorEvent["extra"];
   event.contexts = sanitizeUnknown(event.contexts) as ErrorEvent["contexts"];
   event.tags = sanitizeRecord(event.tags);
-  event.transaction = event.transaction
-    ? sanitizeString("transaction", event.transaction)
-    : event.transaction;
+  event.transaction = redactMessage(event.transaction);
   event.fingerprint = event.fingerprint?.map(() => REDACTED);
   event.breadcrumbs = event.breadcrumbs?.map((breadcrumb) => ({
     ...breadcrumb,
+    category: redactMessage(breadcrumb.category),
     message: redactMessage(breadcrumb.message),
     data: sanitizeUnknown(breadcrumb.data) as typeof breadcrumb.data,
   }));
+  event.spans = event.spans?.map(beforeSendSpan);
 }
 
 function sanitizeUnknown(value: unknown, depth = 0): unknown {
@@ -155,8 +186,7 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   for (const [key, nested] of Object.entries(value)) {
     if (FORWARDING_HEADER_PATTERN.test(key)) continue;
     if (IDENTIFIER_KEY_PATTERN.test(key)) {
-      const stem = key.replace(IDENTIFIER_KEY_PATTERN, "") || "identifier";
-      clean[`${stem}_hash`] = hashIdentifier(String(nested));
+      clean[identifierHashKey(key)] = hashIdentifier(String(nested));
       continue;
     }
     if (SENSITIVE_KEY_PATTERN.test(key) || ERROR_TEXT_KEY_PATTERN.test(key)) {
@@ -176,6 +206,10 @@ function sanitizeRecord(
   const clean: Record<string, string> = {};
   for (const [key, value] of Object.entries(record)) {
     if (FORWARDING_HEADER_PATTERN.test(key)) continue;
+    if (IDENTIFIER_KEY_PATTERN.test(key)) {
+      clean[identifierHashKey(key)] = hashIdentifier(String(value));
+      continue;
+    }
     clean[key] =
       SENSITIVE_KEY_PATTERN.test(key) || typeof value !== "string"
         ? REDACTED
@@ -231,6 +265,11 @@ function sanitizePathname(pathname: string): string {
 
 function getStringValue(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function identifierHashKey(key: string): string {
+  const stem = key.replace(IDENTIFIER_KEY_PATTERN, "").replace(/[_-]+$/, "");
+  return `${stem || "identifier"}_hash`;
 }
 
 function hashIdentifier(value: string): string {

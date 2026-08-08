@@ -1,6 +1,11 @@
-import type { ErrorEvent, EventHint } from "@sentry/nextjs";
+import type { ErrorEvent, EventHint, init as sentryInit } from "@sentry/nextjs";
 import { describe, expect, it } from "vitest";
+import * as sentryConfig from "@/lib/sentry-config";
 import { beforeSend } from "@/lib/sentry-config";
+
+type SentryOptions = Parameters<typeof sentryInit>[0];
+type TransactionEvent = Parameters<NonNullable<SentryOptions["beforeSendTransaction"]>>[0];
+type SpanJSON = Parameters<NonNullable<SentryOptions["beforeSendSpan"]>>[0];
 
 describe("Sentry privacy sanitization", () => {
   it("removes Demo forwarding identifiers and raw error text from the full event payload", () => {
@@ -131,5 +136,157 @@ describe("Sentry privacy sanitization", () => {
     );
     expect(sanitized?.request?.env?.REMOTE_ADDR).toBe("[Filtered]");
     expect(sanitized?.contexts?.transport).not.toHaveProperty("headers.x-forwarded-for");
+  });
+
+  it("removes identifier records, formatted logs, and dynamic breadcrumb categories", () => {
+    const accountId = "acct-RECORD_SENTINEL";
+    const demoId = "demo-RECORD_SENTINEL";
+    const transactionId = "txn-RECORD_SENTINEL";
+    const event = {
+      level: "error",
+      logentry: {
+        message: "safe message",
+        formatted: `formatted ${accountId} ${transactionId}`,
+      },
+      request: {
+        env: {
+          ACCOUNT_ID: accountId,
+          TRANSACTION_ID: transactionId,
+          SAFE_ENV: "safe",
+        },
+      },
+      tags: {
+        accountId,
+        demoId,
+        transactionId,
+        feature: "stocks",
+      },
+      breadcrumbs: [
+        {
+          category: `navigation.${demoId}.${accountId}`,
+          data: {
+            request: {
+              headers: { "x-forwarded-for": "203.0.113.201" },
+              transactionId,
+            },
+          },
+        },
+      ],
+    } as unknown as ErrorEvent;
+
+    const sanitized = beforeSend(event, {} as EventHint);
+    const payload = JSON.stringify(sanitized);
+
+    for (const sensitiveValue of [accountId, demoId, transactionId, "203.0.113.201"]) {
+      expect(payload).not.toContain(sensitiveValue);
+    }
+    expect(sanitized?.logentry).toMatchObject({ formatted: "[Filtered]" });
+    expect(sanitized?.breadcrumbs?.[0]?.category).toBe("[Filtered]");
+    expect(sanitized?.tags).toMatchObject({
+      account_hash: expect.stringMatching(/^hash:/),
+      demo_hash: expect.stringMatching(/^hash:/),
+      transaction_hash: expect.stringMatching(/^hash:/),
+      feature: "stocks",
+    });
+    expect(sanitized?.request?.env).toMatchObject({
+      ACCOUNT_hash: expect.stringMatching(/^hash:/),
+      TRANSACTION_hash: expect.stringMatching(/^hash:/),
+      SAFE_ENV: "safe",
+    });
+  });
+
+  it("sanitizes transaction events and spans before trace transport", () => {
+    const rawIp = "2001:db8:9::77";
+    const accountId = "acct-TRACE_SENTINEL";
+    const transactionId = "txn-TRACE_SENTINEL";
+    const rawUrl = `https://asset-tracker.example/api/accounts/${accountId}/transactions/${transactionId}?token=TRACE_TOKEN_SENTINEL`;
+    const transactionSanitizer = (
+      sentryConfig as typeof sentryConfig & {
+        beforeSendTransaction?: (
+          event: TransactionEvent,
+          hint: EventHint,
+        ) => TransactionEvent | null;
+      }
+    ).beforeSendTransaction;
+    const spanSanitizer = (
+      sentryConfig as typeof sentryConfig & {
+        beforeSendSpan?: (span: SpanJSON) => SpanJSON;
+      }
+    ).beforeSendSpan;
+
+    expect(transactionSanitizer).toBeTypeOf("function");
+    expect(spanSanitizer).toBeTypeOf("function");
+    if (!transactionSanitizer || !spanSanitizer) return;
+
+    const transaction = {
+      type: "transaction",
+      transaction: `GET ${rawUrl}`,
+      request: {
+        url: rawUrl,
+        headers: {
+          "x-forwarded-for": rawIp,
+          authorization: "Bearer TRACE_AUTH_SENTINEL",
+        },
+      },
+      tags: { accountId, transactionId },
+      contexts: {
+        trace: {
+          accountId,
+          request: { url: rawUrl, remoteAddr: rawIp },
+        },
+      },
+      spans: [
+        {
+          trace_id: "a".repeat(32),
+          span_id: "b".repeat(16),
+          start_timestamp: 1,
+          timestamp: 2,
+          description: `GET ${rawUrl}`,
+          data: {
+            "http.url": rawUrl,
+            "http.request.header.x-forwarded-for": rawIp,
+            accountId,
+          },
+          attributes: {
+            "http.request.header.x-forwarded-for": rawIp,
+            transactionId,
+          },
+        },
+      ],
+    } as unknown as TransactionEvent;
+    const span = {
+      trace_id: "c".repeat(32),
+      span_id: "d".repeat(16),
+      start_timestamp: 1,
+      timestamp: 2,
+      description: `GET ${rawUrl}`,
+      data: {
+        "http.url": rawUrl,
+        "http.request.header.x-forwarded-for": rawIp,
+        accountId,
+      },
+      attributes: {
+        "http.request.header.x-forwarded-for": rawIp,
+        transactionId,
+      },
+    } as unknown as SpanJSON;
+
+    const cleanTransaction = transactionSanitizer(transaction, {} as EventHint);
+    const cleanSpan = spanSanitizer(span);
+    const payload = JSON.stringify({ cleanTransaction, cleanSpan });
+
+    for (const sensitiveValue of [
+      rawIp,
+      accountId,
+      transactionId,
+      "TRACE_TOKEN_SENTINEL",
+      "TRACE_AUTH_SENTINEL",
+    ]) {
+      expect(payload).not.toContain(sensitiveValue);
+    }
+    expect(cleanTransaction?.request?.url).toBe(
+      "https://asset-tracker.example/api/accounts/:id/transactions/:id",
+    );
+    expect(cleanSpan.description).toBe("[Filtered]");
   });
 });

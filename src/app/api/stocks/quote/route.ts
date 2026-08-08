@@ -8,7 +8,7 @@ import {
 import { cacheEquityQuote, fetchEquityQuote } from "@/lib/services/stock-watch-service";
 
 export const GET = withAuth(
-  async (request, _ctx, _userId, principal) => {
+  async (request, _ctx, _userId, principal, consumeRefreshCredit) => {
     const key =
       principal.kind === "demo"
         ? rateLimitKeyForSubject(principal.userId, "public-demo-stocks-quote")
@@ -24,6 +24,10 @@ export const GET = withAuth(
     const symbol = searchParams.get("symbol")?.trim().toUpperCase();
     if (!symbol) return failure("Symbol is required");
     const marketLogOptions = { redactIdentifiers: principal.kind === "demo" };
+
+    if (!consumeRefreshCredit) return failure("Market data access is unavailable", 500);
+    const limitedRefresh = await consumeRefreshCredit();
+    if (limitedRefresh) return limitedRefresh;
 
     const quote = await fetchEquityQuote(symbol, marketLogOptions);
     if (!quote) return failure("Only stock symbols can be tracked.", 400);
