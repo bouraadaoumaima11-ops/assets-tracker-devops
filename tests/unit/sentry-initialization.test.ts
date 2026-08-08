@@ -11,6 +11,11 @@ vi.mock("@sentry/nextjs", () => ({
   captureRequestError: mocks.captureRequestError,
   captureRouterTransitionStart: mocks.captureRouterTransitionStart,
   init: mocks.init,
+  spanStreamingIntegration: vi.fn(() => ({ name: "SpanStreaming" })),
+  withStreamedSpan: <T extends object>(callback: T) => {
+    Object.defineProperty(callback, "_streamed", { value: true });
+    return callback;
+  },
 }));
 
 vi.mock("@/lib/logger", () => ({
@@ -20,6 +25,8 @@ vi.mock("@/lib/logger", () => ({
 type SentryOptions = {
   beforeSendSpan?: unknown;
   beforeSendTransaction?: unknown;
+  integrations?: unknown;
+  traceLifecycle?: unknown;
 };
 
 function latestSentryOptions(): SentryOptions {
@@ -47,6 +54,8 @@ describe("Sentry telemetry privacy hooks", () => {
     expect(latestSentryOptions()).toMatchObject({
       beforeSendSpan: expect.any(Function),
       beforeSendTransaction: expect.any(Function),
+      integrations: [{ name: "SpanStreaming" }],
+      traceLifecycle: "stream",
     });
   });
 
@@ -60,6 +69,7 @@ describe("Sentry telemetry privacy hooks", () => {
     expect(latestSentryOptions()).toMatchObject({
       beforeSendSpan: expect.any(Function),
       beforeSendTransaction: expect.any(Function),
+      traceLifecycle: "stream",
     });
   });
 
@@ -73,6 +83,7 @@ describe("Sentry telemetry privacy hooks", () => {
     expect(latestSentryOptions()).toMatchObject({
       beforeSendSpan: expect.any(Function),
       beforeSendTransaction: expect.any(Function),
+      traceLifecycle: "stream",
     });
   });
 });

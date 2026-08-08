@@ -1,3 +1,4 @@
+import { withStreamedSpan } from "@sentry/nextjs";
 import type { ErrorEvent, EventHint, init as sentryInit } from "@sentry/nextjs";
 
 const REDACTED = "[Filtered]";
@@ -101,15 +102,10 @@ export function beforeSendTransaction(
  * Sentry invokes this hook for standalone spans, which do not pass through a
  * transaction event in streamed and Edge transports.
  */
-export function beforeSendSpan(span: SpanJSON): SpanJSON {
-  const sanitizableSpan = span as SpanJSON & { attributes?: unknown };
-  sanitizableSpan.description = redactMessage(sanitizableSpan.description);
-  sanitizableSpan.data = sanitizeUnknown(sanitizableSpan.data) as SpanJSON["data"];
-  if (sanitizableSpan.attributes !== undefined) {
-    sanitizableSpan.attributes = sanitizeUnknown(sanitizableSpan.attributes);
-  }
-  return sanitizableSpan;
-}
+export const beforeSendSpan = withStreamedSpan((span) => {
+  sanitizeSpan(span);
+  return span;
+});
 
 function getEventMessage(event: ErrorEvent): string {
   return event.message ?? event.logentry?.message ?? getStringValue(event.extra?.msg) ?? "";
@@ -171,7 +167,32 @@ function sanitizeEvent(event: SanitizableEvent): void {
     message: redactMessage(breadcrumb.message),
     data: sanitizeUnknown(breadcrumb.data) as typeof breadcrumb.data,
   }));
-  event.spans = event.spans?.map(beforeSendSpan);
+  event.spans = event.spans?.map(sanitizeStaticSpan);
+}
+
+function sanitizeStaticSpan(span: SpanJSON): SpanJSON {
+  sanitizeSpan(span);
+  return span;
+}
+
+function sanitizeSpan(span: {
+  attributes?: unknown;
+  data?: unknown;
+  description?: string;
+  name?: string;
+}): void {
+  if (span.description !== undefined) {
+    span.description = redactMessage(span.description);
+  }
+  if (span.name !== undefined) {
+    span.name = redactMessage(span.name);
+  }
+  if (span.data !== undefined) {
+    span.data = sanitizeUnknown(span.data);
+  }
+  if (span.attributes !== undefined) {
+    span.attributes = sanitizeUnknown(span.attributes);
+  }
 }
 
 function sanitizeUnknown(value: unknown, depth = 0): unknown {

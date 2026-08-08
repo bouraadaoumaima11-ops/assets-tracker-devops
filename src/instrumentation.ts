@@ -31,6 +31,7 @@ export async function register() {
         beforeSend,
         beforeSendTransaction,
         beforeSendSpan,
+        traceLifecycle: "stream",
         enabled: true,
       });
     }
@@ -47,6 +48,7 @@ export async function register() {
       beforeSend,
       beforeSendTransaction,
       beforeSendSpan,
+      traceLifecycle: "stream",
       enabled: true,
     });
   }

@@ -1,11 +1,12 @@
 import type { ErrorEvent, EventHint, init as sentryInit } from "@sentry/nextjs";
+import * as Sentry from "@sentry/nextjs";
 import { describe, expect, it } from "vitest";
 import * as sentryConfig from "@/lib/sentry-config";
-import { beforeSend } from "@/lib/sentry-config";
+import { beforeSend, beforeSendSpan } from "@/lib/sentry-config";
 
 type SentryOptions = Parameters<typeof sentryInit>[0];
 type TransactionEvent = Parameters<NonNullable<SentryOptions["beforeSendTransaction"]>>[0];
-type SpanJSON = Parameters<NonNullable<SentryOptions["beforeSendSpan"]>>[0];
+type TransportOptions = Parameters<typeof Sentry.createTransport>[0];
 
 describe("Sentry privacy sanitization", () => {
   it("removes Demo forwarding identifiers and raw error text from the full event payload", () => {
@@ -208,15 +209,9 @@ describe("Sentry privacy sanitization", () => {
         ) => TransactionEvent | null;
       }
     ).beforeSendTransaction;
-    const spanSanitizer = (
-      sentryConfig as typeof sentryConfig & {
-        beforeSendSpan?: (span: SpanJSON) => SpanJSON;
-      }
-    ).beforeSendSpan;
 
     expect(transactionSanitizer).toBeTypeOf("function");
-    expect(spanSanitizer).toBeTypeOf("function");
-    if (!transactionSanitizer || !spanSanitizer) return;
+    if (!transactionSanitizer) return;
 
     const transaction = {
       type: "transaction",
@@ -254,26 +249,8 @@ describe("Sentry privacy sanitization", () => {
         },
       ],
     } as unknown as TransactionEvent;
-    const span = {
-      trace_id: "c".repeat(32),
-      span_id: "d".repeat(16),
-      start_timestamp: 1,
-      timestamp: 2,
-      description: `GET ${rawUrl}`,
-      data: {
-        "http.url": rawUrl,
-        "http.request.header.x-forwarded-for": rawIp,
-        accountId,
-      },
-      attributes: {
-        "http.request.header.x-forwarded-for": rawIp,
-        transactionId,
-      },
-    } as unknown as SpanJSON;
-
     const cleanTransaction = transactionSanitizer(transaction, {} as EventHint);
-    const cleanSpan = spanSanitizer(span);
-    const payload = JSON.stringify({ cleanTransaction, cleanSpan });
+    const payload = JSON.stringify(cleanTransaction);
 
     for (const sensitiveValue of [
       rawIp,
@@ -287,6 +264,67 @@ describe("Sentry privacy sanitization", () => {
     expect(cleanTransaction?.request?.url).toBe(
       "https://asset-tracker.example/api/accounts/:id/transactions/:id",
     );
-    expect(cleanSpan.description).toBe("[Filtered]");
+    expect(cleanTransaction?.spans?.[0]?.description).toBe("[Filtered]");
+  });
+
+  it("marks the streamed span sanitizer and scrubs standalone streamed span envelopes", async () => {
+    const rawIp = "203.0.113.97";
+    const accountId = "acct-STREAMED_SENTINEL";
+    const transactionId = "txn-STREAMED_SENTINEL";
+    const rawUrl = `https://asset-tracker.example/api/accounts/${accountId}/transactions/${transactionId}?token=STREAMED_TOKEN_SENTINEL`;
+    const outboundPayloads: string[] = [];
+
+    expect(Reflect.get(beforeSendSpan, "_streamed")).toBe(true);
+
+    Sentry.init({
+      dsn: "https://public@example.invalid/1",
+      defaultIntegrations: false,
+      tracesSampleRate: 1,
+      traceLifecycle: "stream",
+      beforeSendSpan,
+      transport: (options: TransportOptions) =>
+        Sentry.createTransport(options, (request) => {
+          outboundPayloads.push(
+            typeof request.body === "string"
+              ? request.body
+              : new TextDecoder().decode(request.body),
+          );
+          return Promise.resolve({ statusCode: 200 });
+        }),
+    });
+
+    Sentry.startSpan(
+      {
+        name: `GET ${rawUrl}`,
+        attributes: {
+          "http.url": rawUrl,
+          "client.ip": rawIp,
+        },
+        forceTransaction: true,
+      },
+      () => undefined,
+    );
+
+    await Sentry.flush(2_000);
+    await Sentry.close(2_000);
+
+    expect(outboundPayloads).toHaveLength(1);
+    const payload = JSON.parse(outboundPayloads[0].trim().split("\n").at(-1) ?? "{}") as {
+      items?: Array<{
+        name?: string;
+        attributes?: Record<string, { value?: string }>;
+      }>;
+    };
+    const streamedSpan = payload.items?.[0];
+    const serializedPayload = JSON.stringify(payload);
+
+    expect(streamedSpan?.name).toBe("[Filtered]");
+    expect(streamedSpan?.attributes?.["http.url"]?.value).toBe(
+      "https://asset-tracker.example/api/accounts/:id/transactions/:id",
+    );
+    expect(streamedSpan?.attributes?.["client.ip"]?.value).toBe("[Filtered]");
+    for (const sensitiveValue of [rawIp, accountId, transactionId, "STREAMED_TOKEN_SENTINEL"]) {
+      expect(serializedPayload).not.toContain(sensitiveValue);
+    }
   });
 });

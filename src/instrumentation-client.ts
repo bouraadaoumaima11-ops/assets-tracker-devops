@@ -27,6 +27,8 @@ if (dsn) {
     beforeSend,
     beforeSendTransaction,
     beforeSendSpan,
+    traceLifecycle: "stream",
+    integrations: [Sentry.spanStreamingIntegration()],
     enabled: true,
   });
 }
