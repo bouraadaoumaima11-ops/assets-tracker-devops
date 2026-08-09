@@ -150,6 +150,24 @@ test("public Demo journey", async ({ browser, page }, testInfo) => {
   await expect(page.getByRole("button", { name: "Reset data" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Sign in" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Exit Demo" })).toBeVisible();
+
+  const desktopActions = page.locator("section.bg-amber-200 div.hidden.md\\:flex > div");
+  const desktopActionsBox = await desktopActions.boundingBox();
+  expect(desktopActionsBox).not.toBeNull();
+  const desktopActionBoxes = await Promise.all(
+    [
+      page.getByRole("button", { name: "Reset data" }),
+      page.getByRole("link", { name: "Sign in" }),
+      page.getByRole("button", { name: "Exit Demo" }),
+    ].map((action) => action.boundingBox()),
+  );
+  expect(desktopActionBoxes.every((box) => box !== null)).toBe(true);
+  for (const box of desktopActionBoxes) {
+    expect(box!.x).toBeGreaterThanOrEqual(desktopActionsBox!.x);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(
+      desktopActionsBox!.x + desktopActionsBox!.width,
+    );
+  }
   expect((await responseData<Account[]>(await page.request.get("/api/accounts"))).length).toBe(5);
 
   const suffix = Date.now().toString(36).toUpperCase();

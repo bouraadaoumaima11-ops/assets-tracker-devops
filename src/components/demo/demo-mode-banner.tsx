@@ -160,7 +160,7 @@ export function DemoModeBanner({ expiresAt }: { expiresAt: string }) {
           <p className="text-sm font-medium">
             {t("banner.title")} · {timeDetails}
           </p>
-          <div className="flex min-w-[24rem] gap-2">{actions()}</div>
+          <div className="grid min-w-[24rem] grid-cols-3 gap-2">{actions()}</div>
         </div>
         <div className="md:hidden">
           <p className="px-3 py-2 text-center text-xs font-semibold">
