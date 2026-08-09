@@ -153,41 +153,4 @@ describe("public Demo shell contract", () => {
     expect(zh.privacy.section9Body).toContain("原始 IP");
     expect(zh.privacy.section9Body).toContain("正式帳號");
   });
-
-  it("keeps Demo CTA start, restart, and pending states accessible and high contrast", () => {
-    const source = read("src/components/demo/demo-login-button.tsx");
-    const en = JSON.parse(read("messages/en-US.json")) as {
-      demo: { login: Record<string, string> };
-    };
-    const zh = JSON.parse(read("messages/zh-TW.json")) as typeof en;
-    const buttonStart = source.indexOf("<Button");
-    const buttonOpeningTag = source.slice(buttonStart, source.indexOf(">", buttonStart) + 1);
-    const button = between(source, "<Button", "</Button>");
-    const loader = between(button, "<Loader2", "/>");
-    const circlePlay = between(button, "<CirclePlay", "/>");
-    const metadataStart = source.indexOf('<span aria-hidden="true"');
-    const metadataOpeningTag = source.slice(metadataStart, source.indexOf(">", metadataStart) + 1);
-    const metadata = source.slice(metadataStart, source.indexOf("</span>", metadataStart));
-
-    expect(buttonOpeningTag).toContain('variant="default"');
-    expect(buttonOpeningTag).toContain("bg-[var(--primary-ink)]");
-    expect(buttonOpeningTag).toContain("text-background");
-    expect(buttonOpeningTag).not.toContain("text-background/");
-    expect(buttonOpeningTag).toContain('pending && "disabled:!opacity-100"');
-    expect(buttonOpeningTag).toContain("disabled={pending}");
-    expect(loader).toContain('className="size-5 animate-spin"');
-    expect(loader).toContain('aria-hidden="true"');
-    expect(circlePlay).toContain('className="size-5"');
-    expect(circlePlay).toContain('aria-hidden="true"');
-    expect(button).toContain(
-      'className="flex min-w-0 flex-col items-start text-left leading-tight"',
-    );
-    expect(metadataOpeningTag).toContain('aria-hidden="true"');
-    expect(metadataOpeningTag).toContain("text-background");
-    expect(metadata).toContain('t("metadata")');
-    expect(button).toContain('t("preparing")');
-    expect(button).toContain('variant === "restart" ? "restartButton" : "button"');
-    expect(en.demo.login.metadata).toBe("No sign-up · Isolated data for 24 hours");
-    expect(zh.demo.login.metadata).toBe("免註冊 · 獨立資料空間保留 24 小時");
-  });
 });

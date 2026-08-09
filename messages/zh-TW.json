@@ -1230,7 +1230,6 @@
       "restartButton": "開始新的 Demo",
       "description": "建立你的獨立範例空間，保留 24 小時，不需要提供個人資料。",
       "preparing": "正在準備範例資料…",
-      "metadata": "免註冊 · 獨立資料空間保留 24 小時",
       "errors": {
         "DEMO_RESTRICTED": "Demo 不提供這項操作。",
         "DEMO_QUOTA_EXHAUSTED": "這個 Demo 已達操作次數上限。",

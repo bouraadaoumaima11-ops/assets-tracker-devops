@@ -1230,7 +1230,6 @@
       "restartButton": "Start a new Demo",
       "description": "Create an isolated sample workspace that lasts 24 hours. No personal information required.",
       "preparing": "Preparing sample data…",
-      "metadata": "No sign-up · Isolated data for 24 hours",
       "errors": {
         "DEMO_RESTRICTED": "That action is not available in the Demo.",
         "DEMO_QUOTA_EXHAUSTED": "This Demo has reached its activity limit.",
