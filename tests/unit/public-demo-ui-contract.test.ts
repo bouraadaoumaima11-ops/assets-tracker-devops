@@ -153,4 +153,22 @@ describe("public Demo shell contract", () => {
     expect(zh.privacy.section9Body).toContain("原始 IP");
     expect(zh.privacy.section9Body).toContain("正式帳號");
   });
+
+  it("renders the prominent two-line Demo CTA with bilingual metadata", () => {
+    const source = read("src/components/demo/demo-login-button.tsx");
+    const en = JSON.parse(read("messages/en-US.json")) as {
+      demo: { login: Record<string, string> };
+    };
+    const zh = JSON.parse(read("messages/zh-TW.json")) as typeof en;
+
+    expect(source).toContain("CirclePlay");
+    expect(source).toContain('variant="default"');
+    expect(source).toContain('t("metadata")');
+    expect(source).toContain('aria-hidden="true"');
+    expect(source).toContain("bg-[var(--primary-ink)]");
+    expect(source).toContain("text-background");
+    expect(source).not.toContain("text-background/");
+    expect(en.demo.login.metadata).toBe("No sign-up · Isolated data for 24 hours");
+    expect(zh.demo.login.metadata).toBe("免註冊 · 獨立資料空間保留 24 小時");
+  });
 });
