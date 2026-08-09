@@ -12,7 +12,7 @@
 
 - Keep `DemoLoginButton` in its existing document position after configured formal sign-in controls.
 - Preserve the existing form action, pending state, error display, disabled behavior, and Demo lifecycle behavior.
-- Use the existing schema-aware `primary` and `primary-foreground` tokens; do not add gradients, glow, decorative animation, a nested card, or a dependency.
+- Use a darker surface derived from existing schema-aware primary tokens and fully opaque contrasting text; both text lines must reach at least `4.5:1` in every supported light and dark color schema. Do not add gradients, glow, decorative animation, a nested card, or a dependency.
 - Use localized English and Traditional Chinese strings; do not hard-code user-facing component text.
 - Both `start` and `restart` variants receive the same option D visual treatment while keeping their existing localized action labels.
 - Keep the decorative play/spinner icon and secondary metadata out of the accessible button name.
@@ -50,7 +50,9 @@ it("renders the prominent two-line Demo CTA with bilingual metadata", () => {
   expect(source).toContain('variant="default"');
   expect(source).toContain('t("metadata")');
   expect(source).toContain('aria-hidden="true"');
-  expect(source).toContain("shadow-primary/30");
+  expect(source).toContain("bg-[var(--primary-ink)]");
+  expect(source).toContain("text-background");
+  expect(source).not.toContain("text-background/");
   expect(en.demo.login.metadata).toBe("No sign-up · Isolated data for 24 hours");
   expect(zh.demo.login.metadata).toBe("免註冊 · 獨立資料空間保留 24 小時");
 });
@@ -64,7 +66,7 @@ Run:
 pnpm exec vitest run tests/unit/public-demo-ui-contract.test.ts
 ```
 
-Expected: the new test fails because `CirclePlay`, `variant="default"`, `t("metadata")`, `shadow-primary/30`, and both metadata messages do not exist yet. Existing tests remain green.
+Expected: the new test fails because `CirclePlay`, `variant="default"`, `t("metadata")`, `bg-[var(--primary-ink)]`, the fully opaque `text-background` treatment, and both metadata messages do not exist yet. Existing tests remain green.
 
 - [ ] **Step 3: Add localized metadata**
 
@@ -89,7 +91,7 @@ In `src/components/demo/demo-login-button.tsx`, import `CirclePlay` alongside `L
   type="submit"
   variant="default"
   disabled={pending}
-  className="h-auto min-h-14 w-full rounded-xl px-4 py-2.5 shadow-sm shadow-primary/30"
+  className="h-auto min-h-14 w-full rounded-xl bg-[var(--primary-ink)] px-4 py-2.5 text-background shadow-sm shadow-primary/30 hover:bg-[color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]"
 >
   {pending ? (
     <Loader2 className="size-5 animate-spin" aria-hidden="true" />
@@ -98,7 +100,7 @@ In `src/components/demo/demo-login-button.tsx`, import `CirclePlay` alongside `L
   )}
   <span className="flex min-w-0 flex-col items-start text-left leading-tight">
     <span>{pending ? t("preparing") : t(variant === "restart" ? "restartButton" : "button")}</span>
-    <span aria-hidden="true" className="mt-1 text-xs font-normal text-primary-foreground/80">
+    <span aria-hidden="true" className="mt-1 text-xs font-normal text-background">
       {t("metadata")}
     </span>
   </span>
@@ -132,7 +134,7 @@ Expected: every command exits 0. If Prettier reports only the four task files, r
 
 - [ ] **Step 7: Verify rendered login-page hierarchy**
 
-Use the repository's existing local/Playwright setup with public Demo enabled. Check desktop and mobile widths in English and Traditional Chinese, including dark mode. Confirm the Demo CTA remains below the configured formal sign-in controls; its action label and metadata do not overflow; keyboard focus, pending/disabled presentation, helper text, and error area remain legible. Do not submit the form against a shared or production database.
+Use the repository's existing local/Playwright setup with public Demo enabled. Check desktop and mobile widths in English and Traditional Chinese, including every supported light and dark color schema. Confirm the Demo CTA remains below the configured formal sign-in controls; its action label and metadata do not overflow; keyboard focus, pending/disabled presentation, helper text, and error area remain legible. Capture computed foreground/background colors and verify both text lines reach at least `4.5:1` for every supported schema. If `--primary-ink` does not meet that threshold in any schema, adjust the token-derived background treatment and the focused contract before implementation is accepted. Do not submit the form against a shared or production database.
 
 - [ ] **Step 8: Commit the implementation**
 

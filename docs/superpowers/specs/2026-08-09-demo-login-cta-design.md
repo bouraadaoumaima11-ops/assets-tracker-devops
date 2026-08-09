@@ -13,7 +13,7 @@ Make the public Demo entry on the login page immediately noticeable while keepin
 
 ## Visual Treatment
 
-- Change the Demo CTA from an outline button to the existing schema-aware primary color with primary foreground text.
+- Change the Demo CTA from an outline button to a darker, schema-aware primary surface derived from the existing color tokens. Use fully opaque contrasting text and verify every supported light/dark color schema reaches at least `4.5:1` for both text lines.
 - Use a restrained primary-colored shadow for separation from the login card. Do not add gradients, glow, decorative animation, or a surrounding nested card.
 - Left-align the two-line copy group while keeping the complete icon-and-copy group visually centered inside the button.
 - The first line remains the existing localized action label.
@@ -27,7 +27,7 @@ Make the public Demo entry on the login page immediately noticeable while keepin
 - Supply English and Traditional Chinese metadata strings through the existing `demo.login` translation namespace.
 - Do not hard-code user-facing text in the component.
 - Keep one accessible button name based on the primary action label; decorative iconography is hidden from assistive technology.
-- Verify that the primary/primary-foreground pairing and smaller metadata text remain legible in light and dark themes.
+- Verify with computed rendered colors that the CTA surface and both text lines reach at least `4.5:1` in every supported light and dark color schema.
 
 ## Component Scope
 
