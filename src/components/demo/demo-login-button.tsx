@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useTranslations } from "next-intl";
 import { CirclePlay, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { startPublicDemoAction, type DemoActionState } from "@/app/demo/actions";
 
 const INITIAL_DEMO_ACTION_STATE: DemoActionState = { errorCode: null };
@@ -17,7 +18,10 @@ export function DemoLoginButton({ variant = "start" }: { variant?: "start" | "re
         type="submit"
         variant="default"
         disabled={pending}
-        className="h-auto min-h-14 w-full rounded-xl bg-[var(--primary-ink)] px-4 py-2.5 text-background shadow-sm shadow-primary/30 hover:bg-[color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]"
+        className={cn(
+          "h-auto min-h-14 w-full rounded-xl bg-[var(--primary-ink)] px-4 py-2.5 text-background shadow-sm shadow-primary/30 hover:bg-[color-mix(in_oklab,var(--primary-ink)_90%,var(--foreground))]",
+          pending && "disabled:!opacity-100",
+        )}
       >
         {pending ? (
           <Loader2 className="size-5 animate-spin" aria-hidden="true" />
