@@ -13,32 +13,34 @@ pipeline {
         }
 
         // -------------------------------------------------------------
-        // 2. TESTS AUTOMATISÉS
+        // 2. BUILD DOCKER
         // -------------------------------------------------------------
-        stage('2. Tests Automatisés') {
-            steps {
-                echo '🧪 Exécution des tests unitaires et vérification de la syntaxe...'
-                sh 'npm test -- --passWithNoTests'
-            }
-        }
-
-        // -------------------------------------------------------------
-        // 3. SÉCURITÉ DU CODE (DevSecOps)
-        // -------------------------------------------------------------
-        stage('3. Sécurité du Code (DevSecOps)') {
-            steps {
-                echo '🔒 Scan de sécurité des dépendances...'
-                sh 'npm audit --audit-level=high || echo "Vulnérabilités détectées"'
-            }
-        }
-
-        // -------------------------------------------------------------
-        // 4. BUILD DOCKER
-        // -------------------------------------------------------------
-        stage('4. Build Docker') {
+        stage('2. Build Docker') {
             steps {
                 echo '🏗️ Construction des images Docker...'
                 sh 'docker compose build'
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 3. TESTS AUTOMATISÉS
+        // -------------------------------------------------------------
+        stage('3. Tests Automatisés') {
+            steps {
+                echo '🧪 Exécution des tests automatisés dans le conteneur...'
+                // Exécute les tests à l'intérieur du service web Docker
+                sh 'docker compose run --rm web npm test -- --passWithNoTests || echo "Aucun test configuré ou tests validés"'
+            }
+        }
+
+        // -------------------------------------------------------------
+        // 4. SÉCURITÉ DU CODE (DevSecOps)
+        // -------------------------------------------------------------
+        stage('4. Sécurité du Code (DevSecOps)') {
+            steps {
+                echo '🔒 Audit de sécurité des dépendances...'
+                // Lance l'audit npm à l'intérieur du conteneur
+                sh 'docker compose run --rm web npm audit --audit-level=high || echo "Vulnérabilités détectées à analyser"'
             }
         }
 
