@@ -2,41 +2,54 @@ pipeline {
     agent any
 
     stages {
-        stage('1. Checkout Code') {
+        // -------------------------------------------------------------
+        // 1. RÉCUPÉRATION DU CODE
+        // -------------------------------------------------------------
+        stage('1. Récupération du Code') {
             steps {
                 echo '📥 Récupération du code source depuis GitHub...'
                 checkout scm
             }
         }
 
+        // -------------------------------------------------------------
+        // 2. TESTS AUTOMATISÉS
+        // -------------------------------------------------------------
         stage('2. Tests Automatisés') {
             steps {
                 echo '🧪 Exécution des tests unitaires et vérification de la syntaxe...'
-                // Exécute la suite de tests de l'application
-                bat 'npm test -- --passWithNoTests'
+                sh 'npm test -- --passWithNoTests'
             }
         }
 
+        // -------------------------------------------------------------
+        // 3. SÉCURITÉ DU CODE (DevSecOps)
+        // -------------------------------------------------------------
         stage('3. Sécurité du Code (DevSecOps)') {
             steps {
                 echo '🔒 Scan de sécurité des dépendances...'
-                // Vérifie les failles de sécurité dans le package.json
-                bat 'npm audit --audit-level=high || echo "Vulnérabilités détectées"'
+                sh 'npm audit --audit-level=high || echo "Vulnérabilités détectées"'
             }
         }
 
+        // -------------------------------------------------------------
+        // 4. BUILD DOCKER
+        // -------------------------------------------------------------
         stage('4. Build Docker') {
             steps {
                 echo '🏗️ Construction des images Docker...'
-                bat 'docker compose build'
+                sh 'docker compose build'
             }
         }
 
+        // -------------------------------------------------------------
+        // 5. DÉPLOIEMENT
+        // -------------------------------------------------------------
         stage('5. Déploiement') {
             steps {
                 echo '🚀 Déploiement et redémarrage des conteneurs...'
-                bat 'docker compose down'
-                bat 'docker compose up -d'
+                sh 'docker compose down'
+                sh 'docker compose up -d'
             }
         }
     }
