@@ -50,3 +50,33 @@ export function resolveAnalysisRange<T extends { date: string }>(
     rangeStartIso,
   };
 }
+
+export const ANALYSIS_RANGES = [
+  { label: "YTD", months: 0 },
+  { label: "6M", months: 6 },
+  { label: "1Y", months: 12 },
+  { label: "2Y", months: 24 },
+  { label: "All", months: Infinity },
+] as const;
+
+export type RangeLabel = (typeof ANALYSIS_RANGES)[number]["label"];
+
+export function getMonthsForRange(label: RangeLabel): number {
+  return ANALYSIS_RANGES.find((r) => r.label === label)!.months;
+}
+
+/**
+ * First-visit default. YTD is the conventional choice, but it reads as a
+ * near-empty chart when there is little history or the year just started, so
+ * widen in those cases. A persisted user choice always wins (see
+ * usePersistedRange). Server-computed at payload fill time.
+ */
+export function pickDefaultRange(snapshots: { date: string }[], now = new Date()): RangeLabel {
+  if (snapshots.length === 0) return "YTD";
+  const first = new Date(snapshots[0].date);
+  const historyMonths =
+    (now.getFullYear() - first.getUTCFullYear()) * 12 + now.getMonth() - first.getUTCMonth() + 1;
+  if (historyMonths <= 6) return "All";
+  if (now.getMonth() < 3) return "6M";
+  return "YTD";
+}
