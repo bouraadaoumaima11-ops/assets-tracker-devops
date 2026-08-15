@@ -9,7 +9,7 @@ There are two supported install paths — decide which one the user wants in §2
 
 ## 1. Goal
 
-Bring up a working astt instance at http://localhost:3000, with secrets generated, migrations applied, and a working sign-in. "Done" = every item in the checklist for your chosen path (§6) passes.
+Bring up a working astt instance — reachable at http://localhost:3000 for a local setup, or at the user's public origin for a production deployment — with secrets generated, migrations applied, and a working sign-in. "Done" = every item in the checklist for your chosen path (§6) passes.
 
 ## 2. Which install path?
 
@@ -128,13 +128,15 @@ pnpm dev
 
 Keep it running in a background or dedicated terminal.
 
-Gate: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/health` prints `200`.
+Gate: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login` prints `200`.
+
+Note: `GET /api/health` reports `503 degraded` on a fresh install until the first snapshot and cron run have succeeded — that is readiness information, not a failure. Use the `/login` check above (the same check the container healthcheck uses) as the liveness gate.
 
 Only continue when the gate passes.
 
 #### Step 8 — Verify sign-in
 
-Open http://localhost:3000, use the one-click Preview Login (local dev, no password) or the owner `AUTH_SELF_HOST_PASSWORD` login, and confirm the dashboard loads. Optionally `pnpm seed:demo`.
+Open http://localhost:3000, use the one-click Preview Login (Path A only — local dev, no password) or the owner `AUTH_SELF_HOST_PASSWORD` login, and confirm the dashboard loads. Optionally `pnpm seed:demo`.
 
 Gate: the dashboard renders after sign-in.
 
@@ -262,7 +264,7 @@ docker compose --profile full down
 - [ ] `.env` exists and all three secrets are generated 64-hex values (no placeholders)
 - [ ] `docker compose ps` → db running/healthy
 - [ ] `pnpm exec prisma migrate deploy` → all migrations applied
-- [ ] `curl http://localhost:3000/api/health` → 200
+- [ ] `curl http://localhost:3000/login` → 200
 - [ ] http://localhost:3000 loads and sign-in works (Preview Login or owner password)
 - [ ] `git status` shows `.env` is NOT tracked
 - [ ] stop with `pnpm db:down` when done
