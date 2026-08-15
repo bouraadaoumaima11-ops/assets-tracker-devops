@@ -16,7 +16,7 @@ A private, multi-currency home for tracking your net worth, investments, cash, p
 
 > Formerly Assets Tracker. Same project, now branded as **astt**.
 
-[Live Demo](https://astt.app) · [Quick Start](#quick-start) · [Deployment](./docs/DEPLOYMENT.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
+[Live Demo](https://astt.app) · [Quick Start](#quick-start) · [Install with AI](#install-with-ai) · [Deployment](./docs/DEPLOYMENT.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
 
 ![astt dashboard on desktop and mobile](./public/readme-hero.jpg)
 
@@ -104,6 +104,16 @@ Open [http://localhost:3000](http://localhost:3000). Stop the local database wit
 
 To explore the app with sample data, sign in with the one-click **Preview Login** (local development only) and run `pnpm seed:demo`. See the [development workflow](./docs/DEVELOPMENT.md) for details.
 
+## Install with AI
+
+Installing astt is a long, mechanical sequence of commands. AI coding agents handle this kind of work more reliably than a human, so we strongly recommend letting an AI agent install and configure astt for you.
+
+Copy-paste this prompt into your coding agent:
+
+> Install and configure astt by following the instructions here: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
+
+> **For LLM Agents:** Before doing anything, `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md` and read the guide end-to-end. First ask the user which install path they want — local development or production Docker Compose — then follow the corresponding section. Follow every step and run every validation command exactly. Do not summarize or skip steps — report each validation result to the user.
+
 ## Production Deployment
 
 ### Docker Compose
@@ -150,6 +160,7 @@ Always back up the database before an upgrade and review the [release notes](htt
 
 ## Documentation
 
+- [Install with an AI agent](./docs/INSTALL_WITH_AI.md)
 - [Deployment and self-hosting](./docs/DEPLOYMENT.md)
 - [Development workflow](./docs/DEVELOPMENT.md)
 - [CI policy](./docs/CI.md)
