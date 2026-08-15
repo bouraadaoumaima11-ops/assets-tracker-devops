@@ -23,8 +23,10 @@ export default getRequestConfig(async () => {
     locale = detectLocaleFromAcceptLanguage(acceptLanguage);
   }
 
+  const messages = (await import(`../../messages/${locale}.json`)).default;
+
   return {
     locale,
-    messages: (await import(`../../messages/${locale}.json`)).default,
+    messages,
   };
 });
