@@ -15,22 +15,18 @@ async function AnalysisContent() {
   if (!session?.user?.id) return null;
   const userId = session.user.id;
 
-  const settingsP = getOrCreateSettings(userId);
-  const [
-    t,
-    messages,
-    locale,
-    { snapshots, cashFlowData, rawHistory, accountCashFlow, investmentCostBasis },
-    settings,
-    accountCount,
-  ] = await Promise.all([
+  const [t, messages, locale, settings, accountCount] = await Promise.all([
     getTranslations("analysis"),
     getMessages(),
     getLocale(),
-    settingsP.then((s) => getCachedAnalysisPayload(userId, s.baseCurrency)),
-    settingsP,
+    getOrCreateSettings(userId),
     countActiveAccounts(userId),
   ]);
+  const { seriesByRange, investmentCostBasis, snapshots, meta } = await getCachedAnalysisPayload(
+    userId,
+    settings.baseCurrency,
+    locale,
+  );
 
   return (
     <NextIntlClientProvider messages={pickMessages(messages, CLIENT_NAMESPACES)}>
@@ -38,11 +34,10 @@ async function AnalysisContent() {
         <LargeTitleHeading>{t("title")}</LargeTitleHeading>
 
         <AnalysisView
-          snapshots={snapshots}
-          cashFlowData={cashFlowData}
-          rawHistory={rawHistory}
-          accountCashFlow={accountCashFlow}
+          seriesByRange={seriesByRange}
           investmentCostBasis={investmentCostBasis}
+          snapshots={snapshots}
+          meta={meta}
           baseCurrency={settings.baseCurrency}
           locale={locale}
           hasAccounts={accountCount > 0}
