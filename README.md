@@ -112,7 +112,7 @@ Copy-paste this prompt into your coding agent:
 
 > Install and configure astt by following the instructions here: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
 
-> **For LLM Agents:** Before doing anything, `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md` and read the guide end-to-end. First ask the user which install path they want — local development or production Docker Compose — then follow the corresponding section. Follow every step and run every validation command exactly. Do not summarize or skip steps — report each validation result to the user.
+> **For LLM Agents:** Before doing anything, `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md` and read the guide end-to-end. First recommend the simplest install path — production Docker Compose, which needs only Docker — and switch to local development only if the user prefers it. Follow every step and run every validation command exactly. Do not summarize or skip steps — report each validation result to the user.
 
 ## Production Deployment
 

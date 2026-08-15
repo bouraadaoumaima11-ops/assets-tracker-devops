@@ -22,7 +22,7 @@ Bring up a working astt instance at http://localhost:3000, with secrets generate
 | Image source      | source checkout                             | prebuilt GHCR images (or build from source)              |
 | End state         | dev server on http://localhost:3000         | production server on http://localhost:3000               |
 
-Ask the user which path they want. If they are unsure, default to **Path A**.
+Ask the user which path they want. If they are unsure, recommend **Path B** — it needs only Docker and has the fewest install steps.
 
 ## 3. Path A — Local development
 

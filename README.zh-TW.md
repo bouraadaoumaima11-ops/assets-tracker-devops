@@ -112,7 +112,7 @@ pnpm dev
 
 > 請依循這裡的指示安裝並設定 astt：https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
 
-> **給 LLM 代理（Agent）：** 動手前請先 `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md`，並從頭到尾讀完這份指南。先詢問使用者要哪一種安裝路徑——本機開發或正式 Docker Compose 部署——再依對應章節執行。請嚴格依照每一步執行並逐一驗證，不要摘要或跳過任何步驟——請把每個驗證結果回報給使用者。
+> **給 LLM 代理（Agent）：** 動手前請先 `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md`，並從頭到尾讀完這份指南。先建議最簡的安裝路徑——正式 Docker Compose 部署，只需 Docker——只有在使用者偏好的情況下才改用本機開發。請嚴格依照每一步執行並逐一驗證，不要摘要或跳過任何步驟——請把每個驗證結果回報給使用者。
 
 ## 正式部署
 
