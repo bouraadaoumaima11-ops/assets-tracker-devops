@@ -153,9 +153,20 @@ The whole stack — `db`, the one-shot `migrate` service, and `app` — runs in 
 | `docker version` and `docker compose` | both succeed         | install Docker + Docker Compose       |
 | `docker info`                         | succeeds (daemon up) | start Docker Desktop, wait, retry     |
 | `git --version`                       | prints a version     | install git (needed to clone/upgrade) |
-| `.env.example` present in repo root   | file exists          | clone the repository first (Step 1)   |
+| `.env.example` present in repo root   | file exists          | clone the repository first (Step 0)   |
 
-### 4.2 Configure the environment
+### 4.2 Clone the repository (skip if already in a clone)
+
+```bash
+git clone https://github.com/mike840609/assets_tracker.git
+cd assets_tracker
+```
+
+Gate: `test -f .env.example` succeeds.
+
+Only continue when the gate passes.
+
+### 4.3 Configure the environment
 
 ```bash
 cp .env.example .env
@@ -180,7 +191,7 @@ Gates:
 
 Only continue when the gates pass.
 
-### 4.3 Deploy the full stack
+### 4.4 Deploy the full stack
 
 Pull the prebuilt application and migration images from GHCR, then start the stack:
 
@@ -197,7 +208,7 @@ Gates:
 
 Only continue when the gates pass.
 
-### 4.4 Verify
+### 4.5 Verify
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}' http://localhost:${APP_PORT:-3000}/login
@@ -209,7 +220,7 @@ Note: `GET /api/health` reports `503 degraded` on a fresh install until the firs
 
 Only continue when the gates pass.
 
-### 4.5 Build from source (optional)
+### 4.6 Build from source (optional)
 
 Instead of pulling prebuilt images:
 
@@ -217,9 +228,9 @@ Instead of pulling prebuilt images:
 docker compose --profile full up --build -d
 ```
 
-Gates are the same as §4.3 and §4.4.
+Gates are the same as §4.4 and §4.5.
 
-### 4.6 Upgrade
+### 4.7 Upgrade
 
 ```bash
 git pull
@@ -229,7 +240,7 @@ docker compose --profile full up --no-build -d
 
 Back up the database (the `postgres_data` volume) before upgrading. Review the release notes on the astt GitHub releases page first.
 
-### 4.7 Stop and reset
+### 4.8 Stop and reset
 
 ```bash
 # Stop the stack; data stays in the postgres_data volume
