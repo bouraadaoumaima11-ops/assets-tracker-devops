@@ -1534,6 +1534,7 @@
     "title": "更新內容",
     "subtitle": "astt 的每個版本，由新到舊。",
     "currentVersion": "目前版本 {version}",
+    "viewReleases": "在 GitHub 查看所有版本",
     "latest": "最新",
     "empty": "尚無版本。",
     "types": {
