@@ -16,7 +16,7 @@
 
 > 原名 Assets Tracker，同一個專案，現以 **astt** 為品牌名。
 
-[線上展示](https://astt.app) · [快速開始](#快速開始) · [部署指南](./docs/DEPLOYMENT.md) · [安全政策](./SECURITY.md) · [參與貢獻](./CONTRIBUTING.md)
+[線上展示](https://astt.app) · [快速開始](#快速開始) · [用 AI 安裝](#用-ai-安裝) · [部署指南](./docs/DEPLOYMENT.md) · [安全政策](./SECURITY.md) · [參與貢獻](./CONTRIBUTING.md)
 
 ![astt 桌面與行動版儀表板](./public/readme-hero.jpg)
 
@@ -104,6 +104,16 @@ pnpm dev
 
 想以示範資料瀏覽應用程式，可使用一鍵 **Preview Login**（僅限本機開發）登入，並執行 `pnpm seed:demo`。詳見[開發流程](./docs/DEVELOPMENT.md)。
 
+## 用 AI 安裝
+
+安裝 astt 是一連串冗長、機械化的指令。AI 程式代理（coding agent）執行這類工作通常比人類更可靠，因此我們強烈建議讓 AI 代理直接幫你安裝並設定 astt。
+
+將下面這段提示詞貼給你的 AI 代理：
+
+> 請依循這裡的指示安裝並設定 astt：https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
+
+> **給 LLM 代理（Agent）：** 動手前請先 `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md`，並從頭到尾讀完這份指南。先詢問使用者要哪一種安裝路徑——本機開發或正式 Docker Compose 部署——再依對應章節執行。請嚴格依照每一步執行並逐一驗證，不要摘要或跳過任何步驟——請把每個驗證結果回報給使用者。
+
 ## 正式部署
 
 ### Docker Compose
@@ -150,6 +160,7 @@ pnpm build
 
 ## 文件
 
+- [使用 AI 代理安裝](./docs/INSTALL_WITH_AI.md)
 - [部署與自行託管](./docs/DEPLOYMENT.md)
 - [開發流程](./docs/DEVELOPMENT.md)
 - [CI 政策](./docs/CI.md)
