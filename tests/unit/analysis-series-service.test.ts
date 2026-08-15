@@ -1,0 +1,212 @@
+import { describe, it, expect } from "vitest";
+import {
+  computeAllRangeSeries,
+  computeAnalysisRangeSeries,
+} from "@/lib/services/analysis-series-service";
+import type {
+  NormalizedSnapshot,
+  RawHistoryData,
+  AccountMeta,
+  AccountMonthlyContribution,
+} from "@/lib/services/history-service";
+import type { MonthlyContribution } from "@/lib/services/analysis-service";
+
+function snap(date: string, netWorth: number): NormalizedSnapshot {
+  return {
+    id: date,
+    date,
+    createdAt: `${date}T00:00:00.000Z`,
+    netWorth,
+    totalAssets: netWorth,
+    totalLiabilities: 0,
+    baseCurrency: "USD",
+    label: null,
+    note: null,
+  };
+}
+
+const accounts: AccountMeta[] = [
+  { id: "brokerage", name: "Brokerage", category: "BROKERAGE", type: "ASSET" },
+];
+
+const rawHistory: RawHistoryData = {
+  snapshots: [
+    { date: "2025-01-31", accountValues: { brokerage: 100 } },
+    { date: "2025-03-31", accountValues: { brokerage: 200 } },
+    { date: "2025-05-31", accountValues: { brokerage: 150 } },
+    { date: "2025-12-31", accountValues: { brokerage: 170 } },
+    { date: "2026-02-28", accountValues: { brokerage: 180 } },
+    { date: "2026-06-30", accountValues: { brokerage: 190 } },
+  ],
+  accounts,
+};
+
+const snapshots = rawHistory.snapshots.map((s) => snap(s.date, s.accountValues.brokerage));
+
+const cashFlowData: MonthlyContribution[] = [
+  { monthKey: "2025-06", contributions: 50 },
+  { monthKey: "2026-02", contributions: 25 },
+];
+
+const accountCashFlow: AccountMonthlyContribution[] = [
+  { accountId: "brokerage", monthKey: "2025-06", contributions: 50 },
+  { accountId: "brokerage", monthKey: "2026-02", contributions: 25 },
+];
+
+// 28 Jul 2026, 12:00 local — matches the analysis-range.test.ts timezone convention.
+const NOW = new Date(2026, 6, 28, 12);
+
+describe("computeAllRangeSeries", () => {
+  it("produces every one of the five ranges with the full series shape", () => {
+    const series = computeAllRangeSeries(
+      snapshots,
+      rawHistory,
+      cashFlowData,
+      accountCashFlow,
+      "en-US",
+      NOW,
+    );
+    expect(Object.keys(series)).toEqual(["YTD", "6M", "1Y", "2Y", "All"]);
+    for (const label of ["YTD", "6M", "1Y", "2Y", "All"] as const) {
+      expect(series[label]).toMatchObject({
+        buckets: expect.any(Array),
+        kpis: expect.any(Object),
+        cashFlowBuckets: expect.any(Array),
+        cumulativeGrowth: expect.any(Array),
+        categoryHistory: expect.any(Array),
+        attributionItems: expect.any(Array),
+        returnTrend: expect.any(Array),
+        drawdownSeries: expect.any(Array),
+      });
+    }
+  });
+});
+
+describe("computeAnalysisRangeSeries — 1Y (now = Jul 2026)", () => {
+  const s = () =>
+    computeAnalysisRangeSeries(
+      snapshots,
+      rawHistory,
+      cashFlowData,
+      accountCashFlow,
+      "1Y",
+      "en-US",
+      NOW,
+    );
+
+  it("aligns buckets to the 1Y month window", () => {
+    const series = s();
+    expect(series.rangeStartIso).toBe("2025-07-01");
+    expect(series.buckets.map((b) => b.monthKey)).toEqual([
+      "2025-07",
+      "2025-08",
+      "2025-09",
+      "2025-10",
+      "2025-11",
+      "2025-12",
+      "2026-01",
+      "2026-02",
+      "2026-03",
+      "2026-04",
+      "2026-05",
+      "2026-06",
+      "2026-07",
+    ]);
+    expect(series.buckets.filter((b) => b.isEmpty)).toHaveLength(10); // 13 − 3 real
+  });
+
+  it("excludes cash flow before the range start and zeroes empty months", () => {
+    const series = s();
+    const feb = series.cashFlowBuckets.find((b) => b.monthKey === "2026-02")!;
+    expect(feb.contributions).toBe(25);
+    expect(feb.marketPerformance).toBeCloseTo(-15); // delta 10 − contrib 25
+    const dec = series.cashFlowBuckets.find((b) => b.monthKey === "2025-12")!;
+    expect(dec.contributions).toBe(0); // no cash that month
+    expect(series.cashFlowBuckets.find((b) => b.monthKey === "2025-06")).toBeUndefined();
+  });
+
+  it("pads category history with monthKey-only points for months without snapshots (#511)", () => {
+    const series = s();
+    expect(series.categoryHistory).toHaveLength(13);
+    expect(series.categoryHistory[0]).toEqual({ monthKey: "2025-07" });
+    expect(series.categoryHistory.find((c) => c.monthKey === "2026-01")).toEqual({
+      monthKey: "2026-01",
+    });
+    expect(series.categoryHistory.find((c) => c.monthKey === "2026-02")?.BROKERAGE).toBe(180);
+  });
+
+  it("computes attribution against the first/last in-range snapshot and in-range cash", () => {
+    const series = s();
+    expect(series.attributionItems).toEqual([
+      expect.objectContaining({
+        accountName: "Brokerage",
+        startValue: 170,
+        endValue: 190,
+        totalDelta: 20,
+        cashContribution: 25,
+        marketPerformance: -5,
+      }),
+    ]);
+  });
+
+  it("computes the half-weight Dietz return for the whole range", () => {
+    expect(s().investmentReturnPct).toBeCloseTo(-5 / 182.5, 5);
+  });
+
+  it("chains monthly Dietz returns across the full month axis", () => {
+    const series = s();
+    expect(series.returnTrend).toHaveLength(13);
+    const dec = series.returnTrend.find((p) => p.monthKey === "2025-12")!;
+    expect(dec.monthlyReturn).toBe(0);
+    expect(dec.cumulativeReturn).toBe(0);
+    const feb = series.returnTrend.find((p) => p.monthKey === "2026-02")!;
+    expect(feb.monthlyReturn).toBeCloseTo(-15 / 182.5, 5);
+    expect(feb.cumulativeReturn).toBeCloseTo(-15 / 182.5, 5);
+  });
+
+  it("keeps the all-time peak when drawing drawdowns from the FULL history", () => {
+    const series = s();
+    expect(series.drawdownSeries).toEqual([
+      { date: "2025-12-31", label: "2025-12-31", drawdownPct: -15 },
+      { date: "2026-02-28", label: "2026-02-28", drawdownPct: -10 },
+      { date: "2026-06-30", label: "2026-06-30", drawdownPct: -5 },
+    ]);
+  });
+
+  it("computes YTD KPIs from the full snapshot series, not the visible range", () => {
+    const series = s();
+    expect(series.kpis.ytdDelta).toBe(20); // latest 190 − prior-year-end 170
+    expect(series.kpis.ytdPct).toBeCloseTo((20 / 170) * 100, 5);
+    expect(series.kpis.avgMonthlyDelta).toBeCloseTo(20 / 3, 5); // deltas 0, 10, 10
+    expect(series.kpis.best?.monthKey).toBe("2026-02");
+    expect(series.kpis.worst?.monthKey).toBe("2025-12");
+  });
+});
+
+describe("computeAnalysisRangeSeries — empty history", () => {
+  it("returns empty/zeroed series without throwing", () => {
+    const s = computeAnalysisRangeSeries(
+      [],
+      { snapshots: [], accounts },
+      [],
+      [],
+      "YTD",
+      "en-US",
+      NOW,
+    );
+    expect(s.buckets).toHaveLength(7);
+    expect(s.buckets.every((b) => b.isEmpty)).toBe(true);
+    expect(s.kpis).toEqual({
+      best: null,
+      worst: null,
+      avgMonthlyDelta: 0,
+      ytdDelta: 0,
+      ytdPct: null,
+    });
+    expect(s.categoryHistory).toHaveLength(7);
+    expect(s.attributionItems).toEqual([]);
+    expect(s.returnTrend).toEqual([]);
+    expect(s.drawdownSeries).toEqual([]);
+    expect(s.investmentReturnPct).toBeNull();
+  });
+});
