@@ -48,6 +48,9 @@
 
 ## 工具比較
 
+<details>
+<summary><b>astt 與 Ghostfolio、Firefly III、Actual Budget 的比較</b></summary>
+
 astt 專注於淨值與投資追蹤。若你主要需要複式記帳或信封預算，[Firefly III](https://github.com/firefly-iii/firefly-iii) 與 [Actual Budget](https://github.com/actualbudget/actual) 是很好的選擇——以下是各工具的定位：
 
 |                                     | astt              | [Ghostfolio](https://github.com/ghostfolio/ghostfolio) | [Firefly III](https://github.com/firefly-iii/firefly-iii) | [Actual Budget](https://github.com/actualbudget/actual) |
@@ -62,6 +65,8 @@ astt 專注於淨值與投資追蹤。若你主要需要複式記帳或信封預
 | 授權條款                            | MIT               | AGPL-3.0                                               | AGPL-3.0                                                  | MIT                                                     |
 
 <sub>整理自各專案 2026 年 7 月的公開文件——最新功能請以各專案官網為準。</sub>
+
+</details>
 
 ## 用 AI 安裝
 

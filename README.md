@@ -48,6 +48,9 @@ Built with Next.js 16, React 19, Prisma 7, PostgreSQL, Tailwind CSS 4, and NextA
 
 ## How It Compares
 
+<details>
+<summary><b>How astt compares to Ghostfolio, Firefly III and Actual Budget</b></summary>
+
 astt focuses on net worth and investments. If you mainly want double-entry bookkeeping or envelope budgeting, [Firefly III](https://github.com/firefly-iii/firefly-iii) and [Actual Budget](https://github.com/actualbudget/actual) are excellent at that — here is where each tool fits:
 
 |                                         | astt                    | [Ghostfolio](https://github.com/ghostfolio/ghostfolio) | [Firefly III](https://github.com/firefly-iii/firefly-iii) | [Actual Budget](https://github.com/actualbudget/actual) |
@@ -62,6 +65,8 @@ astt focuses on net worth and investments. If you mainly want double-entry bookk
 | License                                 | MIT                     | AGPL-3.0                                               | AGPL-3.0                                                  | MIT                                                     |
 
 <sub>Summarized from each project's public documentation as of July 2026 — check their sites for the latest.</sub>
+
+</details>
 
 ## Install with AI
 
