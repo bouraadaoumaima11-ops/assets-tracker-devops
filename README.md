@@ -16,7 +16,7 @@ A private, multi-currency home for tracking your net worth, investments, cash, p
 
 > Formerly Assets Tracker. Same project, now branded as **astt**.
 
-[Live Demo](https://astt.app) · [Quick Start](#quick-start) · [Install with AI](#install-with-ai) · [Deployment](./docs/DEPLOYMENT.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
+[Live Demo](https://astt.app) · [Install with AI](#install-with-ai) · [Quick Start](#quick-start) · [Deployment](./docs/DEPLOYMENT.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
 
 ![astt dashboard on desktop and mobile](./public/readme-hero.jpg)
 
@@ -48,6 +48,9 @@ Built with Next.js 16, React 19, Prisma 7, PostgreSQL, Tailwind CSS 4, and NextA
 
 ## How It Compares
 
+<details>
+<summary><b>How astt compares to Ghostfolio, Firefly III and Actual Budget</b></summary>
+
 astt focuses on net worth and investments. If you mainly want double-entry bookkeeping or envelope budgeting, [Firefly III](https://github.com/firefly-iii/firefly-iii) and [Actual Budget](https://github.com/actualbudget/actual) are excellent at that — here is where each tool fits:
 
 |                                         | astt                    | [Ghostfolio](https://github.com/ghostfolio/ghostfolio) | [Firefly III](https://github.com/firefly-iii/firefly-iii) | [Actual Budget](https://github.com/actualbudget/actual) |
@@ -63,7 +66,19 @@ astt focuses on net worth and investments. If you mainly want double-entry bookk
 
 <sub>Summarized from each project's public documentation as of July 2026 — check their sites for the latest.</sub>
 
+</details>
+
+## Install with AI
+
+Let's leave the installation to AI! Paste the prompt below into your AI agent and start exploring!
+
+> Install astt by following the guide: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
+
+Let an AI agent run the install for you — the guide covers both [local development](#quick-start) and [production self-hosting](#production-deployment).
+
 ## Quick Start
+
+Prefer to run the commands yourself? For local development, follow the steps below. For production, see [Production Deployment](#production-deployment).
 
 ### Prerequisites
 
@@ -78,12 +93,7 @@ cp .env.example .env
 
 Replace the generated-placeholder values for `AUTH_SECRET`, `AUTH_SELF_HOST_PASSWORD`, and `CRON_SECRET`. The example database URLs are ready for the bundled local PostgreSQL container.
 
-The default self-host login is a single owner account protected by `AUTH_SELF_HOST_PASSWORD`. Google OAuth is optional for non-Vercel deployments. To enable it, set both `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`, then configure the OAuth client with:
-
-- Authorized JavaScript origin: `http://localhost:3000`
-- Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
-
-Use your HTTPS production origin and the same `/api/auth/callback/google` path when deploying. Vercel production continues to require Google OAuth.
+The default self-host login is a single owner account protected by `AUTH_SELF_HOST_PASSWORD`. Google OAuth is optional — see [Deployment](./docs/DEPLOYMENT.md).
 
 ### 2. Install and initialize
 
@@ -103,16 +113,6 @@ pnpm dev
 Open [http://localhost:3000](http://localhost:3000). Stop the local database with `pnpm db:down`.
 
 To explore the app with sample data, sign in with the one-click **Preview Login** (local development only) and run `pnpm seed:demo`. See the [development workflow](./docs/DEVELOPMENT.md) for details.
-
-## Install with AI
-
-Installing astt is a long, mechanical sequence of commands. AI coding agents handle this kind of work more reliably than a human, so we strongly recommend letting an AI agent install and configure astt for you.
-
-Copy-paste this prompt into your coding agent:
-
-> Install and configure astt by following the instructions here: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
-
-> **For LLM Agents:** Before doing anything, `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md` and read the guide end-to-end. First recommend the simplest install path — production Docker Compose, which needs only Docker — and switch to local development only if the user prefers it. Follow every step and run every validation command exactly. Do not summarize or skip steps — report each validation result to the user.
 
 ## Production Deployment
 
