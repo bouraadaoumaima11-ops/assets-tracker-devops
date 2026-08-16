@@ -69,11 +69,11 @@ Installing astt is a long, mechanical command sequence — an AI coding agent ha
 
 > Install astt by following the guide: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
 
-Prefer trying it locally first? See [Quick Start](#quick-start).
+Let an AI agent run the install for you — the guide covers both [local development](#quick-start) and [production self-hosting](#production-deployment).
 
 ## Quick Start
 
-Want a production deployment without the manual steps? Use [Install with AI](#install-with-ai) instead.
+Prefer to run the commands yourself? For local development, follow the steps below. For production, see [Production Deployment](#production-deployment).
 
 ### Prerequisites
 
