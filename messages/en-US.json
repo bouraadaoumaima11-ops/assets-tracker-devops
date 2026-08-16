@@ -1534,6 +1534,7 @@
     "title": "What's New",
     "subtitle": "Every release of astt, newest first.",
     "currentVersion": "You're on {version}",
+    "viewReleases": "View all releases on GitHub",
     "latest": "Latest",
     "empty": "No releases yet.",
     "types": {
