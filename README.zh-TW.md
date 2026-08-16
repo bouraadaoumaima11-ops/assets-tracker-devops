@@ -65,7 +65,7 @@ astt 專注於淨值與投資追蹤。若你主要需要複式記帳或信封預
 
 ## 用 AI 安裝
 
-AI 程式代理（coding agent）可以協助你安裝並設定 astt。把下面這段提示詞貼給你的 AI 代理：
+讓我們把安裝交給 AI 吧！！把以下 prompt 輸入你的 AI agent，然後開始體驗吧！
 
 > 請依循指南安裝 astt：https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
 

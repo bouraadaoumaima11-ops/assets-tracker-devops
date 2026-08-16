@@ -65,7 +65,7 @@ astt focuses on net worth and investments. If you mainly want double-entry bookk
 
 ## Install with AI
 
-An AI coding agent can install and configure astt for you. Paste this prompt into your coding agent:
+Let's leave the installation to AI! Paste the prompt below into your AI agent and start exploring!
 
 > Install astt by following the guide: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
 
