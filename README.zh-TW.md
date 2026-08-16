@@ -16,7 +16,7 @@
 
 > 原名 Assets Tracker，同一個專案，現以 **astt** 為品牌名。
 
-[線上展示](https://astt.app) · [快速開始](#快速開始) · [用 AI 安裝](#用-ai-安裝) · [部署指南](./docs/DEPLOYMENT.md) · [安全政策](./SECURITY.md) · [參與貢獻](./CONTRIBUTING.md)
+[線上展示](https://astt.app) · [用 AI 安裝](#用-ai-安裝) · [快速開始](#快速開始) · [部署指南](./docs/DEPLOYMENT.md) · [安全政策](./SECURITY.md) · [參與貢獻](./CONTRIBUTING.md)
 
 ![astt 桌面與行動版儀表板](./public/readme-hero.jpg)
 
@@ -63,7 +63,17 @@ astt 專注於淨值與投資追蹤。若你主要需要複式記帳或信封預
 
 <sub>整理自各專案 2026 年 7 月的公開文件——最新功能請以各專案官網為準。</sub>
 
+## 用 AI 安裝
+
+安裝 astt 是一連串冗長、機械化的指令 — AI 程式代理（coding agent）執行這類工作比人類更可靠。把下面這段提示詞貼給你的 AI 代理：
+
+> 請依循指南安裝 astt：https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
+
+想先在本地體驗？請見[快速開始](#快速開始)。
+
 ## 快速開始
+
+想直接正式部署、不想手動跑指令？請改用[用 AI 安裝](#用-ai-安裝)。
 
 ### 必要條件
 
@@ -78,12 +88,7 @@ cp .env.example .env
 
 替換 `AUTH_SECRET`、`AUTH_SELF_HOST_PASSWORD` 與 `CRON_SECRET` 的預留值。範例中的資料庫連線已可直接搭配內建的本機 PostgreSQL 容器。
 
-自行部署預設使用由 `AUTH_SELF_HOST_PASSWORD` 保護的單一擁有者帳號。非 Vercel 部署可選擇啟用 Google OAuth；請同時設定 `AUTH_GOOGLE_ID` 與 `AUTH_GOOGLE_SECRET`，並將 OAuth 用戶端設定為：
-
-- 已授權的 JavaScript 來源：`http://localhost:3000`
-- 已授權的重新導向 URI：`http://localhost:3000/api/auth/callback/google`
-
-正式部署時請改用 HTTPS 網域，並保留相同的 `/api/auth/callback/google` 路徑。Vercel 正式環境仍強制使用 Google OAuth。
+自行部署預設使用由 `AUTH_SELF_HOST_PASSWORD` 保護的單一擁有者帳號。Google OAuth 為選用 — 請見[部署指南](./docs/DEPLOYMENT.md)。
 
 ### 2. 安裝並初始化
 
@@ -103,16 +108,6 @@ pnpm dev
 開啟 [http://localhost:3000](http://localhost:3000)。使用 `pnpm db:down` 停止本機資料庫。
 
 想以示範資料瀏覽應用程式，可使用一鍵 **Preview Login**（僅限本機開發）登入，並執行 `pnpm seed:demo`。詳見[開發流程](./docs/DEVELOPMENT.md)。
-
-## 用 AI 安裝
-
-安裝 astt 是一連串冗長、機械化的指令。AI 程式代理（coding agent）執行這類工作通常比人類更可靠，因此我們強烈建議讓 AI 代理直接幫你安裝並設定 astt。
-
-將下面這段提示詞貼給你的 AI 代理：
-
-> 請依循這裡的指示安裝並設定 astt：https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
-
-> **給 LLM 代理（Agent）：** 動手前請先 `curl https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md`，並從頭到尾讀完這份指南。先建議最簡的安裝路徑——正式 Docker Compose 部署，只需 Docker——只有在使用者偏好的情況下才改用本機開發。請嚴格依照每一步執行並逐一驗證，不要摘要或跳過任何步驟——請把每個驗證結果回報給使用者。
 
 ## 正式部署
 
