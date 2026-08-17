@@ -12,25 +12,11 @@ import { FreshnessBadge } from "@/components/ui/freshness-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
 import { Card } from "@/components/ui/card";
 import type { NormalizedSnapshot } from "@/lib/services/history-service";
-import type {
-  RawHistoryData,
-  SnapshotBreakdown,
-  AccountMonthlyContribution,
-} from "@/lib/services/history-service";
+import { computeDrawdownSeries } from "@/lib/services/analysis-service";
 import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service";
-import {
-  aggregateMonthlyChange,
-  computeKpis,
-  fillMonthRange,
-  buildCashFlowBuckets,
-  buildCumulativeGrowth,
-  aggregateCategoryHistory,
-  computePerformanceAttribution,
-  computeInvestmentReturn,
-  computeInvestmentReturnSeries,
-  computeDrawdownSeries,
-} from "@/lib/services/analysis-service";
-import type { MonthlyContribution, CategoryDataPoint } from "@/lib/services/analysis-service";
+import type { AnalysisRangeSeries } from "@/lib/services/analysis-series-service";
+import type { AnalysisPayloadMeta } from "@/lib/services/analysis-payload-service";
+import { ANALYSIS_RANGES, type RangeLabel } from "./analysis-range";
 import {
   LazyAssetsLiabilitiesChart,
   LazyCashFlowChart,
@@ -41,46 +27,19 @@ import {
   LazyReturnTrendChart,
   LazyDrawdownChart,
 } from "./lazy-analysis-charts";
-import { resolveAnalysisRange } from "./analysis-range";
 import { KpiTiles } from "./kpi-tiles";
 import { AnalysisEmptyState } from "./analysis-empty-state";
 
 interface Props {
+  /** Full normalized history — used by the mobile #history tab (HistoryView). */
   snapshots: NormalizedSnapshot[];
-  cashFlowData: MonthlyContribution[];
-  rawHistory: RawHistoryData;
-  accountCashFlow: AccountMonthlyContribution[];
+  /** All five ranges precomputed on the server (see analysis-series-service). */
+  seriesByRange: Record<RangeLabel, AnalysisRangeSeries>;
   investmentCostBasis: InvestmentCostBasisSummary;
+  meta: AnalysisPayloadMeta;
   baseCurrency: string;
   locale: string;
   hasAccounts: boolean;
-}
-
-const ranges = [
-  { label: "YTD", months: 0 },
-  { label: "6M", months: 6 },
-  { label: "1Y", months: 12 },
-  { label: "2Y", months: 24 },
-  { label: "All", months: Infinity },
-] as const;
-
-type RangeLabel = (typeof ranges)[number]["label"];
-
-// First-visit default. YTD is the conventional choice, but it reads as a near-empty
-// chart when there is little history or the year just started, so widen in those cases.
-// A persisted user choice always wins over this (see usePersistedRange).
-function pickDefaultRange(snapshots: NormalizedSnapshot[]): RangeLabel {
-  if (snapshots.length === 0) return "YTD";
-  const first = new Date(snapshots[0].date);
-  const now = new Date();
-  // `first` is a snapshot date parsed from a UTC "YYYY-MM-DD" string (UTC-midnight),
-  // so read its month with UTC getters to match how snapshots are bucketed
-  // everywhere else; `now` is a genuine local instant (the user's current month).
-  const historyMonths =
-    (now.getFullYear() - first.getUTCFullYear()) * 12 + now.getMonth() - first.getUTCMonth() + 1;
-  if (historyMonths <= 6) return "All";
-  if (now.getMonth() < 3) return "6M"; // Jan–Mar: YTD would be a thin 1–3 month slice
-  return "YTD";
 }
 
 function MountedAnalysis({ show, children }: { show: boolean; children: ReactNode }) {
@@ -89,10 +48,9 @@ function MountedAnalysis({ show, children }: { show: boolean; children: ReactNod
 
 export function AnalysisView({
   snapshots,
-  cashFlowData,
-  rawHistory,
-  accountCashFlow,
+  seriesByRange,
   investmentCostBasis,
+  meta,
   baseCurrency,
   locale,
   hasAccounts,
@@ -106,10 +64,7 @@ export function AnalysisView({
   // lays them side-by-side, where the wider gap matches the column rhythm.
   const gridGapClass = isCompact ? "gap-3" : "gap-4 xl:gap-6";
   const stackGapClass = isCompact ? "space-y-3" : "space-y-6";
-  const [range, setRange] = usePersistedRange<RangeLabel>(
-    "analysis-view",
-    pickDefaultRange(snapshots),
-  );
+  const [range, setRange] = usePersistedRange<RangeLabel>("analysis-view", meta.defaultRange);
   const shouldReduceMotion = useReducedMotion();
   const rangeFadeTransition = shouldReduceMotion
     ? { duration: 0 }
@@ -123,92 +78,28 @@ export function AnalysisView({
     All: "rangeAll",
   };
 
-  const rangeOptions: SegmentedOption<RangeLabel>[] = ranges.map((r) => ({
+  const rangeOptions: SegmentedOption<RangeLabel>[] = ANALYSIS_RANGES.map((r) => ({
     value: r.label,
     label: t(rangeLabelKey[r.label] as Parameters<typeof t>[0]),
   }));
   const activeRangeLabel = t(rangeLabelKey[range] as Parameters<typeof t>[0]);
 
-  const { filteredSnapshots, rangeStart, rangeEnd, rangeStartIso } = useMemo(() => {
-    const selected = ranges.find((r) => r.label === range)!;
-    return resolveAnalysisRange(snapshots, selected.months);
-  }, [snapshots, range]);
+  // All series are precomputed on the server per range; switching ranges is an
+  // O(1) lookup into the payload (the fade below animates the swap). The
+  // fallback covers a stale sessionStorage value from an older range set —
+  // without it an unknown label takes the whole route down.
+  const series = seriesByRange[range] ?? seriesByRange[meta.defaultRange];
 
-  const buckets = useMemo(() => {
-    const real = aggregateMonthlyChange(filteredSnapshots);
-    return fillMonthRange(real, rangeStart, rangeEnd);
-  }, [filteredSnapshots, rangeStart, rangeEnd]);
-
-  const kpis = useMemo(() => computeKpis(buckets, snapshots), [buckets, snapshots]);
-
-  // Cash flow: filter contributions to range, then merge with buckets
-  const cashFlowBuckets = useMemo(() => {
-    const filtered = cashFlowData.filter((c) => c.monthKey >= rangeStartIso.slice(0, 7));
-    return buildCashFlowBuckets(buckets, filtered, locale);
-  }, [cashFlowData, buckets, rangeStartIso, locale]);
-
-  const cumulativeGrowth = useMemo(() => buildCumulativeGrowth(cashFlowBuckets), [cashFlowBuckets]);
-
-  // Raw history filtered to range
-  const filteredRawSnapshots = useMemo((): SnapshotBreakdown[] => {
-    return rawHistory.snapshots.filter((s) => s.date >= rangeStartIso);
-  }, [rawHistory.snapshots, rangeStartIso]);
-
-  const categoryHistory = useMemo(() => {
-    const real = aggregateCategoryHistory(filteredRawSnapshots, rawHistory.accounts);
-    const byKey = new Map(real.map((c) => [c.monthKey, c]));
-    return buckets.map((b) => {
-      const existing = byKey.get(b.monthKey);
-      if (existing) return existing;
-      // Padded month with no snapshot: keep it on the axis (to match the other
-      // charts' X length) but emit only the monthKey — no category values. The
-      // chart reads an absent category as null so the stacked area breaks at the
-      // gap instead of plunging to zero (#511).
-      return { monthKey: b.monthKey } as CategoryDataPoint;
-    });
-  }, [filteredRawSnapshots, rawHistory.accounts, buckets]);
-
-  const attributionItems = useMemo(
-    () =>
-      computePerformanceAttribution(
-        filteredRawSnapshots,
-        rawHistory.accounts,
-        accountCashFlow,
-        rangeStartIso.slice(0, 7),
-      ),
-    [filteredRawSnapshots, rawHistory.accounts, accountCashFlow, rangeStartIso],
-  );
-
-  const investmentReturnPct = useMemo(
-    () =>
-      computeInvestmentReturn(
-        filteredRawSnapshots,
-        rawHistory.accounts,
-        accountCashFlow,
-        rangeStartIso.slice(0, 7),
-      ),
-    [filteredRawSnapshots, rawHistory.accounts, accountCashFlow, rangeStartIso],
-  );
-
-  const returnTrend = useMemo(
-    () =>
-      computeInvestmentReturnSeries(
-        filteredRawSnapshots,
-        rawHistory.accounts,
-        accountCashFlow,
-        buckets.map((b) => b.monthKey),
-        locale,
-      ),
-    [filteredRawSnapshots, rawHistory.accounts, accountCashFlow, buckets, locale],
-  );
-
+  // Not precomputed per range: this is one scan over `snapshots`, which is
+  // shipped in full for HistoryView anyway. Five server-side copies would cost
+  // more payload than the scan costs here.
   const drawdownSeries = useMemo(
-    () => computeDrawdownSeries(snapshots, rangeStartIso),
-    [snapshots, rangeStartIso],
+    () => computeDrawdownSeries(snapshots, series.rangeStartIso),
+    [snapshots, series.rangeStartIso],
   );
 
-  const hasData = snapshots.length > 0;
-  const latestSnapshotAt = snapshots.at(-1)?.createdAt ?? null;
+  const hasData = meta.hasSnapshots;
+  const latestSnapshotAt = meta.latestSnapshotAt;
 
   // Analysis no longer shows History as a peer tab; History has its own route and
   // the dashboard links there directly. The /analysis#history deep link still
@@ -285,18 +176,18 @@ export function AnalysisView({
                 <div className="grid min-w-0 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-stretch 2xl:grid-cols-[minmax(0,1fr)_22rem]">
                   <div className="min-w-0 py-4 group-data-[size=sm]/card:py-3">
                     <LazyAssetsLiabilitiesChart
-                      buckets={buckets}
+                      buckets={series.buckets}
                       baseCurrency={baseCurrency}
                       locale={locale}
                     />
                   </div>
                   <div className="min-w-0 border-t border-border/60 bg-muted/20 px-4 py-4 xl:border-t-0 xl:border-l xl:bg-muted/25 group-data-[size=sm]/card:px-3 group-data-[size=sm]/card:py-3">
                     <KpiTiles
-                      kpis={kpis}
+                      kpis={series.kpis}
                       baseCurrency={baseCurrency}
                       locale={locale}
                       rangeLabel={activeRangeLabel}
-                      investmentReturnPct={investmentReturnPct}
+                      investmentReturnPct={series.investmentReturnPct}
                     />
                   </div>
                 </div>
@@ -321,11 +212,14 @@ export function AnalysisView({
                 </div>
                 <div className={cn("grid", gridGapClass, "xl:grid-cols-2")}>
                   <Card size="sm" className="h-full">
-                    <LazyCashFlowChart buckets={cashFlowBuckets} baseCurrency={baseCurrency} />
+                    <LazyCashFlowChart
+                      buckets={series.cashFlowBuckets}
+                      baseCurrency={baseCurrency}
+                    />
                   </Card>
                   <Card size="sm" className="h-full">
                     <LazyCumulativeGrowthChart
-                      points={cumulativeGrowth}
+                      points={series.cumulativeGrowth}
                       baseCurrency={baseCurrency}
                     />
                   </Card>
@@ -336,7 +230,7 @@ export function AnalysisView({
                     />
                   </Card>
                   <Card size="sm" className="h-full">
-                    <LazyReturnTrendChart points={returnTrend} />
+                    <LazyReturnTrendChart points={series.returnTrend} />
                   </Card>
                   <Card size="sm" className="h-full xl:col-span-2">
                     <LazyDrawdownChart points={drawdownSeries} />
@@ -361,13 +255,16 @@ export function AnalysisView({
                 <div className={cn("grid", gridGapClass, "xl:grid-cols-2")}>
                   <Card size="sm" className="h-full">
                     <LazyCategoryTrendChart
-                      data={categoryHistory}
+                      data={series.categoryHistory}
                       baseCurrency={baseCurrency}
                       locale={locale}
                     />
                   </Card>
                   <Card size="sm" className="h-full">
-                    <LazyAttributionChart items={attributionItems} baseCurrency={baseCurrency} />
+                    <LazyAttributionChart
+                      items={series.attributionItems}
+                      baseCurrency={baseCurrency}
+                    />
                   </Card>
                 </div>
               </section>

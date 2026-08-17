@@ -15,21 +15,29 @@ async function AnalysisContent() {
   if (!session?.user?.id) return null;
   const userId = session.user.id;
 
+  // The payload is the slowest read on this page (five DB queries + the
+  // per-range aggregation), so it starts as soon as its two inputs resolve
+  // rather than after every other await.
   const settingsP = getOrCreateSettings(userId);
+  const localeP = getLocale();
+  const payloadP = Promise.all([settingsP, localeP]).then(([s, l]) =>
+    getCachedAnalysisPayload(userId, s.baseCurrency, l),
+  );
+
   const [
     t,
     messages,
     locale,
-    { snapshots, cashFlowData, rawHistory, accountCashFlow, investmentCostBasis },
     settings,
     accountCount,
+    { seriesByRange, investmentCostBasis, snapshots, meta },
   ] = await Promise.all([
     getTranslations("analysis"),
     getMessages(),
-    getLocale(),
-    settingsP.then((s) => getCachedAnalysisPayload(userId, s.baseCurrency)),
+    localeP,
     settingsP,
     countActiveAccounts(userId),
+    payloadP,
   ]);
 
   return (
@@ -38,11 +46,10 @@ async function AnalysisContent() {
         <LargeTitleHeading>{t("title")}</LargeTitleHeading>
 
         <AnalysisView
-          snapshots={snapshots}
-          cashFlowData={cashFlowData}
-          rawHistory={rawHistory}
-          accountCashFlow={accountCashFlow}
+          seriesByRange={seriesByRange}
           investmentCostBasis={investmentCostBasis}
+          snapshots={snapshots}
+          meta={meta}
           baseCurrency={settings.baseCurrency}
           locale={locale}
           hasAccounts={accountCount > 0}
