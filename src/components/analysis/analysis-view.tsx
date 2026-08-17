@@ -14,9 +14,13 @@ import { Card } from "@/components/ui/card";
 import type { NormalizedSnapshot } from "@/lib/services/history-service";
 import { computeDrawdownSeries } from "@/lib/services/analysis-service";
 import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service";
-import type { AnalysisRangeSeries } from "@/lib/services/analysis-series-service";
-import type { AnalysisPayloadMeta } from "@/lib/services/analysis-payload-service";
-import { ANALYSIS_RANGES, type RangeLabel } from "./analysis-range";
+import type { AnalysisPayloadMeta, AnalysisRangeSeries } from "@/lib/analysis-contract";
+import {
+  ANALYSIS_RANGES,
+  getMessageKeyForRange,
+  resolveActiveRange,
+  type RangeLabel,
+} from "@/lib/analysis-range";
 import {
   LazyAssetsLiabilitiesChart,
   LazyCashFlowChart,
@@ -70,25 +74,16 @@ export function AnalysisView({
     ? { duration: 0 }
     : { duration: 0.22, ease: [0.16, 1, 0.3, 1] as const };
 
-  const rangeLabelKey: Record<RangeLabel, string> = {
-    YTD: "rangeYTD",
-    "6M": "range6M",
-    "1Y": "range1Y",
-    "2Y": "range2Y",
-    All: "rangeAll",
-  };
-
+  const activeRange = resolveActiveRange(range, meta.defaultRange);
   const rangeOptions: SegmentedOption<RangeLabel>[] = ANALYSIS_RANGES.map((r) => ({
     value: r.label,
-    label: t(rangeLabelKey[r.label] as Parameters<typeof t>[0]),
+    label: t(r.messageKey),
   }));
-  const activeRangeLabel = t(rangeLabelKey[range] as Parameters<typeof t>[0]);
+  const activeRangeLabel = t(getMessageKeyForRange(activeRange));
 
   // All series are precomputed on the server per range; switching ranges is an
-  // O(1) lookup into the payload (the fade below animates the swap). The
-  // fallback covers a stale sessionStorage value from an older range set —
-  // without it an unknown label takes the whole route down.
-  const series = seriesByRange[range] ?? seriesByRange[meta.defaultRange];
+  // O(1) lookup into the payload (the fade below animates the swap).
+  const series = seriesByRange[activeRange];
 
   // Not precomputed per range: this is one scan over `snapshots`, which is
   // shipped in full for HistoryView anyway. Five server-side copies would cost
@@ -98,8 +93,8 @@ export function AnalysisView({
     [snapshots, series.rangeStartIso],
   );
 
-  const hasData = meta.hasSnapshots;
-  const latestSnapshotAt = meta.latestSnapshotAt;
+  const hasData = snapshots.length > 0;
+  const latestSnapshotAt = snapshots.at(-1)?.createdAt ?? null;
 
   // Analysis no longer shows History as a peer tab; History has its own route and
   // the dashboard links there directly. The /analysis#history deep link still
@@ -152,7 +147,7 @@ export function AnalysisView({
             variant="pill"
             size="sm"
             options={rangeOptions}
-            value={range}
+            value={activeRange}
             onValueChange={setRange}
             aria-label={t("title")}
             className="flex-nowrap bg-background/80 dark:bg-card/70 ring-1 ring-border/50 backdrop-blur-md"
@@ -164,7 +159,7 @@ export function AnalysisView({
           <AnalysisEmptyState hasAccounts={hasAccounts} />
         ) : (
           <motion.div
-            key={range}
+            key={activeRange}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={rangeFadeTransition}
