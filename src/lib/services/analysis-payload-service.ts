@@ -45,6 +45,10 @@ export async function getCachedAnalysisPayload(
           getInvestmentCostBasisSummary(userId, baseCurrency),
         ]);
 
+      // One clock reading for the whole fill: every range and the default
+      // range must agree on "now", even when a fill straddles midnight.
+      const now = new Date();
+
       return {
         seriesByRange: computeAllRangeSeries(
           snapshots,
@@ -52,13 +56,14 @@ export async function getCachedAnalysisPayload(
           cashFlowData,
           accountCashFlow,
           locale,
+          now,
         ),
         investmentCostBasis,
         snapshots,
         meta: {
           hasSnapshots: snapshots.length > 0,
           latestSnapshotAt: snapshots.at(-1)?.createdAt ?? null,
-          defaultRange: pickDefaultRange(snapshots),
+          defaultRange: pickDefaultRange(snapshots, now),
         },
       };
     },

@@ -1,3 +1,5 @@
+import { taiwanCalendarDay } from "@/lib/app-day";
+
 export interface AnalysisRange<T extends { date: string }> {
   filteredSnapshots: T[];
   rangeStart: Date;
@@ -5,13 +7,21 @@ export interface AnalysisRange<T extends { date: string }> {
   rangeStartIso: string;
 }
 
+/**
+ * Snapshot `date` is stamped with the Taiwan calendar day (see lib/app-day),
+ * so range boundaries must be derived from that same day — never from the
+ * host's local calendar. This runs on the server (UTC) since #688, where
+ * local getters would drop the newest month between 05:30 and 08:00 Taipei on
+ * the 1st, and resolve YTD to the whole previous year on 1 January.
+ */
 export function resolveAnalysisRange<T extends { date: string }>(
   snapshots: T[],
   months: number,
   now = new Date(),
 ): AnalysisRange<T> {
-  const year = now.getFullYear();
-  const month = now.getMonth();
+  const today = taiwanCalendarDay(now);
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth();
   const rangeEnd = new Date(Date.UTC(year, month, 1));
 
   if (months === 0) {
@@ -69,14 +79,19 @@ export function getMonthsForRange(label: RangeLabel): number {
  * First-visit default. YTD is the conventional choice, but it reads as a
  * near-empty chart when there is little history or the year just started, so
  * widen in those cases. A persisted user choice always wins (see
- * usePersistedRange). Server-computed at payload fill time.
+ * usePersistedRange). Server-computed at payload fill time, so `now` is read
+ * as a Taiwan calendar day to match how snapshot dates are bucketed.
  */
 export function pickDefaultRange(snapshots: { date: string }[], now = new Date()): RangeLabel {
   if (snapshots.length === 0) return "YTD";
   const first = new Date(snapshots[0].date);
+  const today = taiwanCalendarDay(now);
   const historyMonths =
-    (now.getFullYear() - first.getUTCFullYear()) * 12 + now.getMonth() - first.getUTCMonth() + 1;
+    (today.getUTCFullYear() - first.getUTCFullYear()) * 12 +
+    today.getUTCMonth() -
+    first.getUTCMonth() +
+    1;
   if (historyMonths <= 6) return "All";
-  if (now.getMonth() < 3) return "6M";
+  if (today.getUTCMonth() < 3) return "6M"; // Jan–Mar: YTD would be a thin 1–3 month slice
   return "YTD";
 }

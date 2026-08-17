@@ -15,18 +15,30 @@ async function AnalysisContent() {
   if (!session?.user?.id) return null;
   const userId = session.user.id;
 
-  const [t, messages, locale, settings, accountCount] = await Promise.all([
+  // The payload is the slowest read on this page (five DB queries + the
+  // per-range aggregation), so it starts as soon as its two inputs resolve
+  // rather than after every other await.
+  const settingsP = getOrCreateSettings(userId);
+  const localeP = getLocale();
+  const payloadP = Promise.all([settingsP, localeP]).then(([s, l]) =>
+    getCachedAnalysisPayload(userId, s.baseCurrency, l),
+  );
+
+  const [
+    t,
+    messages,
+    locale,
+    settings,
+    accountCount,
+    { seriesByRange, investmentCostBasis, snapshots, meta },
+  ] = await Promise.all([
     getTranslations("analysis"),
     getMessages(),
-    getLocale(),
-    getOrCreateSettings(userId),
+    localeP,
+    settingsP,
     countActiveAccounts(userId),
+    payloadP,
   ]);
-  const { seriesByRange, investmentCostBasis, snapshots, meta } = await getCachedAnalysisPayload(
-    userId,
-    settings.baseCurrency,
-    locale,
-  );
 
   return (
     <NextIntlClientProvider messages={pickMessages(messages, CLIENT_NAMESPACES)}>

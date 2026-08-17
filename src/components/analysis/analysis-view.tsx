@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useMemo, useRef, useState, useEffect, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { motion, useReducedMotion } from "framer-motion";
 import { usePersistedRange } from "@/hooks/use-persisted-range";
@@ -12,6 +12,7 @@ import { FreshnessBadge } from "@/components/ui/freshness-badge";
 import { SegmentedControl, type SegmentedOption } from "@/components/ui/segmented-control";
 import { Card } from "@/components/ui/card";
 import type { NormalizedSnapshot } from "@/lib/services/history-service";
+import { computeDrawdownSeries } from "@/lib/services/analysis-service";
 import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service";
 import type { AnalysisRangeSeries } from "@/lib/services/analysis-series-service";
 import type { AnalysisPayloadMeta } from "@/lib/services/analysis-payload-service";
@@ -84,8 +85,18 @@ export function AnalysisView({
   const activeRangeLabel = t(rangeLabelKey[range] as Parameters<typeof t>[0]);
 
   // All series are precomputed on the server per range; switching ranges is an
-  // O(1) lookup into the payload (the fade below animates the swap).
-  const series = seriesByRange[range];
+  // O(1) lookup into the payload (the fade below animates the swap). The
+  // fallback covers a stale sessionStorage value from an older range set —
+  // without it an unknown label takes the whole route down.
+  const series = seriesByRange[range] ?? seriesByRange[meta.defaultRange];
+
+  // Not precomputed per range: this is one scan over `snapshots`, which is
+  // shipped in full for HistoryView anyway. Five server-side copies would cost
+  // more payload than the scan costs here.
+  const drawdownSeries = useMemo(
+    () => computeDrawdownSeries(snapshots, series.rangeStartIso),
+    [snapshots, series.rangeStartIso],
+  );
 
   const hasData = meta.hasSnapshots;
   const latestSnapshotAt = meta.latestSnapshotAt;
@@ -222,7 +233,7 @@ export function AnalysisView({
                     <LazyReturnTrendChart points={series.returnTrend} />
                   </Card>
                   <Card size="sm" className="h-full xl:col-span-2">
-                    <LazyDrawdownChart points={series.drawdownSeries} />
+                    <LazyDrawdownChart points={drawdownSeries} />
                   </Card>
                 </div>
               </section>

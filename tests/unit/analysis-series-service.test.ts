@@ -76,7 +76,6 @@ describe("computeAllRangeSeries", () => {
         categoryHistory: expect.any(Array),
         attributionItems: expect.any(Array),
         returnTrend: expect.any(Array),
-        drawdownSeries: expect.any(Array),
       });
     }
   });
@@ -164,13 +163,8 @@ describe("computeAnalysisRangeSeries — 1Y (now = Jul 2026)", () => {
     expect(feb.cumulativeReturn).toBeCloseTo(-15 / 182.5, 5);
   });
 
-  it("keeps the all-time peak when drawing drawdowns from the FULL history", () => {
-    const series = s();
-    expect(series.drawdownSeries).toEqual([
-      { date: "2025-12-31", label: "2025-12-31", drawdownPct: -15 },
-      { date: "2026-02-28", label: "2026-02-28", drawdownPct: -10 },
-      { date: "2026-06-30", label: "2026-06-30", drawdownPct: -5 },
-    ]);
+  it("does not ship a drawdown series — the client derives it from snapshots", () => {
+    expect(s()).not.toHaveProperty("drawdownSeries");
   });
 
   it("computes YTD KPIs from the full snapshot series, not the visible range", () => {
@@ -180,6 +174,46 @@ describe("computeAnalysisRangeSeries — 1Y (now = Jul 2026)", () => {
     expect(series.kpis.avgMonthlyDelta).toBeCloseTo(20 / 3, 5); // deltas 0, 10, 10
     expect(series.kpis.best?.monthKey).toBe("2026-02");
     expect(series.kpis.worst?.monthKey).toBe("2025-12");
+  });
+});
+
+describe("computeAnalysisRangeSeries — Taiwan-day month boundary", () => {
+  // 2026-09-01 06:00 Taipei: the cron (21:30 UTC) has already stamped a
+  // snapshot with the new month while a UTC host still reads August.
+  const JUST_AFTER_CRON = new Date("2026-08-31T22:00:00Z");
+  const withSeptember: RawHistoryData = {
+    snapshots: [...rawHistory.snapshots, { date: "2026-09-01", accountValues: { brokerage: 210 } }],
+    accounts,
+  };
+  const septemberSnapshots = withSeptember.snapshots.map((s) =>
+    snap(s.date, s.accountValues.brokerage),
+  );
+
+  it("keeps the newest month in the buckets", () => {
+    const series = computeAnalysisRangeSeries(
+      septemberSnapshots,
+      withSeptember,
+      cashFlowData,
+      accountCashFlow,
+      "6M",
+      "en-US",
+      JUST_AFTER_CRON,
+    );
+    expect(series.buckets.at(-1)?.monthKey).toBe("2026-09");
+    expect(series.categoryHistory.at(-1)?.monthKey).toBe("2026-09");
+  });
+
+  it("shares one instant across every range", () => {
+    const all = computeAllRangeSeries(
+      septemberSnapshots,
+      withSeptember,
+      cashFlowData,
+      accountCashFlow,
+      "en-US",
+      JUST_AFTER_CRON,
+    );
+    const lastMonths = Object.values(all).map((s) => s.buckets.at(-1)?.monthKey);
+    expect(new Set(lastMonths)).toEqual(new Set(["2026-09"]));
   });
 });
 
@@ -206,7 +240,6 @@ describe("computeAnalysisRangeSeries — empty history", () => {
     expect(s.categoryHistory).toHaveLength(7);
     expect(s.attributionItems).toEqual([]);
     expect(s.returnTrend).toEqual([]);
-    expect(s.drawdownSeries).toEqual([]);
     expect(s.investmentReturnPct).toBeNull();
   });
 });

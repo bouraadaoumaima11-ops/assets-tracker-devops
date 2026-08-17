@@ -15,7 +15,6 @@ import {
   computePerformanceAttribution,
   computeInvestmentReturn,
   computeInvestmentReturnSeries,
-  computeDrawdownSeries,
   type MonthlyBucket,
   type AnalysisKpis,
   type CashFlowBucket,
@@ -23,7 +22,6 @@ import {
   type CategoryDataPoint,
   type AttributionItem,
   type ReturnTrendPoint,
-  type DrawdownPoint,
   type MonthlyContribution,
 } from "@/lib/services/analysis-service";
 import type {
@@ -41,15 +39,19 @@ export interface AnalysisRangeSeries {
   attributionItems: AttributionItem[];
   investmentReturnPct: number | null;
   returnTrend: ReturnTrendPoint[];
-  drawdownSeries: DrawdownPoint[];
   rangeStartIso: string;
 }
 
 /**
  * Replicates the former client-side AnalysisView useMemo chain exactly, per
- * range. All inputs are the FULL datasets; range filtering happens inside
+ * range, minus the drawdown series — that one is a plain scan over
+ * `snapshots`, which the client receives in full anyway, so precomputing it
+ * five times would ship the same points over and over.
+ *
+ * All inputs are the FULL datasets; range filtering happens inside
  * resolveAnalysisRange. `now` freezes at cache-fill time — accepted staleness
- * (same class as the rest of the cached payload).
+ * (same class as the rest of the cached payload). Pass one shared `now` for
+ * the whole fill so every range resolves against the same instant.
  */
 export function computeAnalysisRangeSeries(
   snapshots: NormalizedSnapshot[],
@@ -106,7 +108,6 @@ export function computeAnalysisRangeSeries(
     buckets.map((b) => b.monthKey),
     locale,
   );
-  const drawdownSeries = computeDrawdownSeries(snapshots, rangeStartIso);
 
   return {
     buckets,
@@ -117,7 +118,6 @@ export function computeAnalysisRangeSeries(
     attributionItems,
     investmentReturnPct,
     returnTrend,
-    drawdownSeries,
     rangeStartIso,
   };
 }

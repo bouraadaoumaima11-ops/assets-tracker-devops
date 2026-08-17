@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { computePerformanceAttribution } from "@/lib/services/analysis-service";
 import {
   ANALYSIS_RANGES,
@@ -10,13 +10,28 @@ import type { AccountMonthlyContribution, SnapshotBreakdown } from "@/lib/servic
 
 const originalTimezone = process.env.TZ;
 
-afterAll(() => {
+// Restore per test, not per file: a leaked TZ would silently decide the
+// outcome of every case appended after the one that set it.
+afterEach(() => {
   if (originalTimezone === undefined) {
     delete process.env.TZ;
   } else {
     process.env.TZ = originalTimezone;
   }
 });
+
+/** Host timezones the server could plausibly run in. */
+const HOST_TIMEZONES = ["UTC", "Asia/Taipei", "America/Los_Angeles"];
+
+/**
+ * 2026-09-01 06:00 Taipei — half an hour after the daily snapshot cron
+ * (21:30 UTC) has stamped a snapshot with date 2026-09-01, while a UTC host
+ * still reads August.
+ */
+const JUST_AFTER_CRON_ON_THE_FIRST = new Date("2026-08-31T22:00:00Z");
+
+/** 2026-01-01 02:00 Taipei — a UTC host still reads December 2025. */
+const NEW_YEAR_IN_TAIPEI = new Date("2025-12-31T18:00:00Z");
 
 describe("resolveAnalysisRange", () => {
   it("keeps 6M, 1Y, and 2Y boundaries on the intended month in UTC+8 and UTC-7", () => {
@@ -78,6 +93,45 @@ describe("resolveAnalysisRange", () => {
   });
 });
 
+describe("resolveAnalysisRange — Taiwan calendar day boundaries", () => {
+  const monthOf = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+
+  it.each(HOST_TIMEZONES)(
+    "ends the window on the Taiwan month, not the host month (TZ=%s)",
+    (timezone) => {
+      process.env.TZ = timezone;
+      const snapshots = [{ date: "2026-08-31" }, { date: "2026-09-01" }];
+      const range = resolveAnalysisRange(snapshots, 6, JUST_AFTER_CRON_ON_THE_FIRST);
+
+      // rangeEnd feeds fillMonthRange; an August end silently drops the
+      // newest month from every month-bucketed chart.
+      expect(monthOf(range.rangeEnd)).toBe("2026-09");
+      expect(range.rangeStartIso).toBe("2026-03-01");
+      expect(range.filteredSnapshots.map((s) => s.date)).toContain("2026-09-01");
+    },
+  );
+
+  it.each(HOST_TIMEZONES)("resolves YTD to the Taiwan year (TZ=%s)", (timezone) => {
+    process.env.TZ = timezone;
+    const snapshots = [{ date: "2025-06-30" }, { date: "2026-01-01" }];
+    const range = resolveAnalysisRange(snapshots, 0, NEW_YEAR_IN_TAIPEI);
+
+    expect(range.rangeStartIso).toBe("2026-01-01");
+    expect(monthOf(range.rangeEnd)).toBe("2026-01");
+    expect(range.filteredSnapshots.map((s) => s.date)).toEqual(["2026-01-01"]);
+  });
+
+  it("returns the same window for one instant regardless of host timezone", () => {
+    const results = HOST_TIMEZONES.map((timezone) => {
+      process.env.TZ = timezone;
+      const r = resolveAnalysisRange([], 12, JUST_AFTER_CRON_ON_THE_FIRST);
+      return { rangeStartIso: r.rangeStartIso, rangeEnd: r.rangeEnd.toISOString() };
+    });
+    expect(new Set(results.map((r) => JSON.stringify(r))).size).toBe(1);
+  });
+});
+
 describe("ANALYSIS_RANGES", () => {
   it("defines the five ranges in selector order with their month counts", () => {
     expect(ANALYSIS_RANGES.map((r) => r.label)).toEqual(["YTD", "6M", "1Y", "2Y", "All"]);
@@ -110,5 +164,12 @@ describe("pickDefaultRange", () => {
 
   it("returns YTD otherwise", () => {
     expect(pickDefaultRange([{ date: "2024-01-15" }], new Date(2026, 6, 1))).toBe("YTD");
+  });
+
+  it.each(HOST_TIMEZONES)("reads the current month as the Taiwan month (TZ=%s)", (timezone) => {
+    process.env.TZ = timezone;
+    // Taipei is already in January, so the Jan–Mar widening applies even
+    // though a UTC host still reads December.
+    expect(pickDefaultRange([{ date: "2024-01-15" }], NEW_YEAR_IN_TAIPEI)).toBe("6M");
   });
 });
