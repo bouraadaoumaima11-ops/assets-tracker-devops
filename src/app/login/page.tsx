@@ -14,6 +14,8 @@ import {
 } from "@/lib/env";
 import { getAuthContext } from "@/lib/auth-session";
 import { getTranslations } from "next-intl/server";
+import { REPO_URL } from "@/lib/repo";
+import { GitHubMark } from "@/components/layout/github-mark";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -39,6 +41,7 @@ async function exitDemoOriginBeforeFormalSignIn(): Promise<boolean> {
 
 async function LoginContent() {
   const t = await getTranslations("login");
+  const tNav = await getTranslations("nav");
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center relative overflow-hidden bg-background">
@@ -216,6 +219,15 @@ async function LoginContent() {
             {t("footerLink")}
           </Link>
           .
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 flex items-center justify-center gap-1.5 hover:text-foreground transition-colors"
+          >
+            <GitHubMark className="h-3.5 w-3.5" />
+            {tNav("sourceCode")}
+          </a>
         </div>
       </div>
     </div>
