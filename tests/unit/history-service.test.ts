@@ -545,7 +545,7 @@ describe("getAccountMonthlyCashFlow (occurrence-date bucketing — locks #498)",
       new Date(Date.UTC(2026, 2, 1)),
       new Date(Date.UTC(2026, 3, 1)),
     );
-    const cashFlow = buildCashFlowBuckets(buckets, contributions, "en-US");
+    const cashFlow = buildCashFlowBuckets(buckets, contributions);
     const cumulative = buildCumulativeGrowth(cashFlow);
 
     // First bucket: no fake market loss.

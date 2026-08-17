@@ -180,17 +180,32 @@ describe("buildCashFlowBuckets", () => {
         isEmpty: false,
       },
     ];
-    const result = buildCashFlowBuckets(
-      buckets,
-      [{ monthKey: "2026-01", contributions: 60 }],
-      "en-US",
-    );
+    const result = buildCashFlowBuckets(buckets, [{ monthKey: "2026-01", contributions: 60 }]);
     expect(result[0]).toMatchObject({
       monthKey: "2026-01",
       contributions: 60,
       marketPerformance: 40,
       deltaNetWorth: 100,
     });
+  });
+
+  it("exposes month keys without a preformatted label when locale is not passed", () => {
+    const buckets = [
+      {
+        monthKey: "2026-01",
+        endDate: "2026-01",
+        startNetWorth: 0,
+        endNetWorth: 100,
+        totalAssets: 100,
+        totalLiabilities: 0,
+        deltaNetWorth: 100,
+        deltaPct: null,
+        isEmpty: false,
+      },
+    ];
+    const result = buildCashFlowBuckets(buckets, [{ monthKey: "2026-01", contributions: 60 }]);
+    expect(result[0]).toMatchObject({ monthKey: "2026-01", contributions: 60 });
+    expect(result[0]).not.toHaveProperty("label");
   });
 
   it("treats months with no contribution data as zero contribution", () => {
@@ -207,7 +222,7 @@ describe("buildCashFlowBuckets", () => {
         isEmpty: false,
       },
     ];
-    const result = buildCashFlowBuckets(buckets, [], "en-US");
+    const result = buildCashFlowBuckets(buckets, []);
     expect(result[0]).toMatchObject({ contributions: 0, marketPerformance: -10 });
   });
 
@@ -225,11 +240,7 @@ describe("buildCashFlowBuckets", () => {
         isEmpty: true,
       },
     ];
-    const result = buildCashFlowBuckets(
-      buckets,
-      [{ monthKey: "2026-03", contributions: 500 }],
-      "en-US",
-    );
+    const result = buildCashFlowBuckets(buckets, [{ monthKey: "2026-03", contributions: 500 }]);
     expect(result[0]).toMatchObject({ contributions: 0, marketPerformance: 0 });
   });
 });
@@ -242,7 +253,6 @@ describe("buildCumulativeGrowth", () => {
     isEmpty = false,
   ) => ({
     monthKey,
-    label: monthKey,
     contributions,
     marketPerformance,
     deltaNetWorth: contributions + marketPerformance,
@@ -258,6 +268,12 @@ describe("buildCumulativeGrowth", () => {
     expect(result.map((p) => p.cumulativeContributions)).toEqual([100, 150, 150]);
     expect(result.map((p) => p.cumulativeMarket)).toEqual([20, 10, 40]);
     expect(result.map((p) => p.cumulativeTotal)).toEqual([120, 160, 190]);
+  });
+
+  it("does not copy a label onto cumulative points", () => {
+    const result = buildCumulativeGrowth([bucket("2026-01", 100, 20)]);
+    expect(result[0]).toMatchObject({ monthKey: "2026-01", cumulativeContributions: 100 });
+    expect(result[0]).not.toHaveProperty("label");
   });
 
   it("keeps the running total flat across empty padded months", () => {
@@ -463,7 +479,6 @@ describe("computeInvestmentReturnSeries", () => {
       accounts,
       [],
       ["2026-01", "2026-02", "2026-03"],
-      "en-US",
     );
     expect(points).toHaveLength(3);
     // Jan: first-month baseline = first snapshot within the month (1000), end 1100
@@ -482,6 +497,23 @@ describe("computeInvestmentReturnSeries", () => {
     // BANK account movement (a2: 500 → 9999) must not affect any return
   });
 
+  it("exposes return-trend month keys without a preformatted label", () => {
+    const snapshots: SnapshotBreakdown[] = [
+      { date: "2026-01-05", accountValues: { a1: 1000 } },
+      { date: "2026-01-31", accountValues: { a1: 1100 } },
+      { date: "2026-02-28", accountValues: { a1: 1265 } },
+    ];
+    const points = computeInvestmentReturnSeries(
+      snapshots,
+      accounts,
+      [],
+      ["2026-01", "2026-02", "2026-03"],
+    );
+    expect(points).toHaveLength(3);
+    expect(points[0].monthKey).toBe("2026-01");
+    expect(points[0]).not.toHaveProperty("label");
+  });
+
   it("applies half-weight cash flows in the month they occur", () => {
     const snapshots: SnapshotBreakdown[] = [
       { date: "2026-01-31", accountValues: { a1: 1000 } },
@@ -491,13 +523,10 @@ describe("computeInvestmentReturnSeries", () => {
       { accountId: "a1", monthKey: "2026-02", contributions: 200 },
       { accountId: "a2", monthKey: "2026-02", contributions: 4000 }, // BANK — excluded
     ];
-    const points = computeInvestmentReturnSeries(
-      snapshots,
-      accounts,
-      cashFlows,
-      ["2026-01", "2026-02"],
-      "en-US",
-    );
+    const points = computeInvestmentReturnSeries(snapshots, accounts, cashFlows, [
+      "2026-01",
+      "2026-02",
+    ]);
     // Feb: gain = 1500 − 1000 − 200 = 300; base = 1000 + 100 = 1100
     expect(points[1].monthlyReturn).toBeCloseTo(300 / 1100, 10);
   });
@@ -512,13 +541,11 @@ describe("computeInvestmentReturnSeries", () => {
     const cashFlows: AccountMonthlyContribution[] = [
       { accountId: "a1", monthKey: "2026-02", contributions: 1000 },
     ];
-    const points = computeInvestmentReturnSeries(
-      snapshots,
-      accounts,
-      cashFlows,
-      ["2026-01", "2026-02", "2026-03"],
-      "en-US",
-    );
+    const points = computeInvestmentReturnSeries(snapshots, accounts, cashFlows, [
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
     // Jan: base = 0 → null return, index still null
     expect(points[0].monthlyReturn).toBeNull();
     expect(points[0].cumulativeReturn).toBeNull();
@@ -539,13 +566,11 @@ describe("computeInvestmentReturnSeries", () => {
     const cashFlows: AccountMonthlyContribution[] = [
       { accountId: "a1", monthKey: "2026-02", contributions: 10000 }, // deposited during the gap
     ];
-    const points = computeInvestmentReturnSeries(
-      snapshots,
-      accounts,
-      cashFlows,
-      ["2026-01", "2026-02", "2026-03"],
-      "en-US",
-    );
+    const points = computeInvestmentReturnSeries(snapshots, accounts, cashFlows, [
+      "2026-01",
+      "2026-02",
+      "2026-03",
+    ]);
     expect(points[1].isEmpty).toBe(true);
     // Mar: gain = 11100 − 1000 − 10000 = 100; base = 1000 + 10000/2 = 6000
     expect(points[2].monthlyReturn).toBeCloseTo(100 / 6000, 10);
@@ -559,13 +584,10 @@ describe("computeInvestmentReturnSeries", () => {
     const cashFlows: AccountMonthlyContribution[] = [
       { accountId: "a1", monthKey: "2026-01", contributions: 10000 }, // predates the baseline
     ];
-    const points = computeInvestmentReturnSeries(
-      snapshots,
-      accounts,
-      cashFlows,
-      ["2026-01", "2026-02"],
-      "en-US",
-    );
+    const points = computeInvestmentReturnSeries(snapshots, accounts, cashFlows, [
+      "2026-01",
+      "2026-02",
+    ]);
     expect(points[0].isEmpty).toBe(true);
     // Feb baseline is the first snapshot within Feb (10000), which already contains the Jan deposit
     expect(points[1].monthlyReturn).toBeCloseTo(500 / 10000, 10);
@@ -578,7 +600,6 @@ describe("computeInvestmentReturnSeries", () => {
         accounts,
         [],
         ["2026-01"],
-        "en-US",
       ),
     ).toEqual([]);
     const bankOnly: AccountMeta[] = [
@@ -588,9 +609,7 @@ describe("computeInvestmentReturnSeries", () => {
       { date: "2026-01-31", accountValues: { a2: 500 } },
       { date: "2026-02-28", accountValues: { a2: 600 } },
     ];
-    expect(
-      computeInvestmentReturnSeries(snaps, bankOnly, [], ["2026-01", "2026-02"], "en-US"),
-    ).toEqual([]);
+    expect(computeInvestmentReturnSeries(snaps, bankOnly, [], ["2026-01", "2026-02"])).toEqual([]);
   });
 });
 

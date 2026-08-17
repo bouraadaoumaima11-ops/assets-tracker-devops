@@ -11,12 +11,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartEmptyState } from "./chart-empty-state";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { formatCurrency } from "@/lib/currencies";
 import { formatChartTick, getMonthTickInterval } from "@/lib/chart-formatters";
+import { formatMonthLabel } from "@/lib/services/analysis-service";
 import { usePrivacyMode } from "@/components/layout/privacy-mode-context";
 import { useDensity } from "@/components/layout/density-context";
 import type { CashFlowBucket } from "@/lib/services/analysis-service";
@@ -30,7 +31,7 @@ interface Props {
 }
 
 interface TooltipPayload {
-  payload: CashFlowBucket;
+  payload: CashFlowBucket & { label: string; deltaLine: number | null };
   dataKey: string;
   value: number;
   color: string;
@@ -100,6 +101,7 @@ const cashflowConfig = {} satisfies ChartConfig;
 
 export const CashFlowChart = memo(function CashFlowChart({ buckets, baseCurrency }: Props) {
   const t = useTranslations("analysis");
+  const locale = useLocale();
   const { privacyMode } = usePrivacyMode();
   const { density } = useDensity();
   const chartHeight = density === "compact" ? 180 : 200;
@@ -111,8 +113,13 @@ export const CashFlowChart = memo(function CashFlowChart({ buckets, baseCurrency
 
   // Break the net-delta line on padded months instead of dragging it to zero.
   const chartData = useMemo(
-    () => buckets.map((b) => ({ ...b, deltaLine: b.isEmpty ? null : b.deltaNetWorth })),
-    [buckets],
+    () =>
+      buckets.map((b) => ({
+        ...b,
+        label: formatMonthLabel(b.monthKey, locale),
+        deltaLine: b.isEmpty ? null : b.deltaNetWorth,
+      })),
+    [buckets, locale],
   );
 
   return (

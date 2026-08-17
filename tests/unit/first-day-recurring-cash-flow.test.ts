@@ -271,11 +271,7 @@ describe("first-day recurring cash flow (#658)", () => {
       getAccountMonthlyCashFlow("u1", "USD"),
       getRawHistoryWithBreakdown("u1", "USD"),
     ]);
-    const cashFlow = buildCashFlowBuckets(
-      aggregateMonthlyChange(snapshots),
-      monthlyCashFlow,
-      "en-US",
-    );
+    const cashFlow = buildCashFlowBuckets(aggregateMonthlyChange(snapshots), monthlyCashFlow);
     const cumulative = buildCumulativeGrowth(cashFlow);
     const attribution = computePerformanceAttribution(
       rawHistory.snapshots,

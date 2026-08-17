@@ -31,6 +31,7 @@ import { useActiveDate } from "@/components/history/active-day-context";
 import {
   DEFAULT_TREND_RANGE,
   TREND_RANGES,
+  TREND_RANGE_LABELS,
   findChartPoint,
 } from "@/components/dashboard/trend-chart-utils";
 
@@ -44,6 +45,9 @@ type SnapshotData = {
 };
 
 type ChartDataPoint = SnapshotData & { netWorthPct?: number };
+
+const PCT_MODES = ["off", "on"] as const;
+type PctMode = (typeof PCT_MODES)[number];
 
 function TrendTooltip({
   active,
@@ -166,8 +170,12 @@ export function TrendChart({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { width: containerWidth, height: containerHeight } = useContainerSize(containerRef);
-  const [range, setRange] = usePersistedRange<string>("trend-chart", DEFAULT_TREND_RANGE);
-  const [pctMode, setPctMode] = usePersistedRange<string>("trend-pct-mode", "off");
+  const [range, setRange] = usePersistedRange<string>(
+    "trend-chart",
+    DEFAULT_TREND_RANGE,
+    TREND_RANGE_LABELS,
+  );
+  const [pctMode, setPctMode] = usePersistedRange<PctMode>("trend-pct-mode", "off", PCT_MODES);
   const t = useTranslations("trendChart");
   const { privacyMode } = usePrivacyMode();
   const { isAnimationActive, onAnimationEnd } = useChartAnimation();
@@ -177,6 +185,7 @@ export function TrendChart({
     ? { duration: 0 }
     : { duration: 0.18, ease: [0.16, 1, 0.3, 1] as const };
 
+  // Safe: usePersistedRange only ever returns a label from TREND_RANGE_LABELS.
   const selectedRange = TREND_RANGES.find((r) => r.label === range)!;
   const isPercentMode = pctMode === "on";
   const currencySymbol = getCurrencySymbol(baseCurrency);
@@ -342,7 +351,7 @@ export function TrendChart({
                 { value: "off", label: currencySymbol, title: t("absToggleTitle") },
                 { value: "on", label: "%", title: t("pctToggleTitle") },
               ]}
-              value={pctMode === "on" ? "on" : "off"}
+              value={pctMode}
               onValueChange={setPctMode}
               aria-label={t("valueModeLabel")}
               className="gap-0 bg-muted p-0.5"

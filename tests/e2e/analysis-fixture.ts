@@ -1,8 +1,16 @@
 import { loadEnvConfig } from "@next/env";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
+import { taiwanCalendarDay } from "@/lib/app-day";
+export {
+  authenticateAnalysisFixture,
+  resolveAnalysisFixtureBaseUrl,
+  setAnalysisFixtureLocale,
+} from "./analysis-fixture-auth";
 
-const E2E_EMAIL = "e2e-test@preview.local";
+const E2E_EMAIL = "e2e-analysis-populated@preview.local";
+const E2E_EMPTY_EMAIL = "e2e-empty@preview.local";
+export const E2E_MOBILE_EMAIL = "e2e-mobile@preview.local";
 const FIXTURE_PREFIX = "E2E Analysis QA";
 const BASE_CURRENCY = "USD";
 const MONTH_COUNT = 18;
@@ -39,15 +47,25 @@ function fixtureMonths() {
   return Array.from({ length: MONTH_COUNT }, (_, index) => addMonths(firstMonth, index));
 }
 
-interface AnalysisFixture {
-  snapshotDates: string[];
+export interface AnalysisFixture {
+  readonly email: string;
+  readonly expectedDefaultRange: "6M" | "YTD";
+  readonly userId: string;
+  readonly snapshotDates: readonly string[];
 }
 
 function toDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-async function getOrCreateE2eUser(pool: pg.Pool) {
+function expectedDefaultRange(snapshotDates: readonly string[]): "6M" | "YTD" {
+  if (snapshotDates.length <= 6) {
+    throw new Error("Analysis fixture must contain more than six monthly snapshots.");
+  }
+  return taiwanCalendarDay(new Date()).getUTCMonth() < 3 ? "6M" : "YTD";
+}
+
+async function getOrCreateE2eUser(pool: pg.Pool, email: string) {
   const userId = randomUUID();
   const user = await pool.query<{ id: string }>(
     `
@@ -56,7 +74,7 @@ async function getOrCreateE2eUser(pool: pg.Pool) {
       ON CONFLICT ("email") DO UPDATE SET "name" = COALESCE("User"."name", EXCLUDED."name")
       RETURNING "id"
     `,
-    [userId, E2E_EMAIL, "E2E Test User"],
+    [userId, email, "E2E Test User"],
   );
   const id = user.rows[0].id;
 
@@ -75,7 +93,7 @@ async function getOrCreateE2eUser(pool: pg.Pool) {
   return { id };
 }
 
-async function removeFixtureData(pool: pg.Pool, userId: string, snapshotDates: string[]) {
+async function removeFixtureData(pool: pg.Pool, userId: string, snapshotDates: readonly string[]) {
   await pool.query(`DELETE FROM "Account" WHERE "userId" = $1 AND "name" LIKE $2`, [
     userId,
     `${FIXTURE_PREFIX}%`,
@@ -86,12 +104,19 @@ async function removeFixtureData(pool: pg.Pool, userId: string, snapshotDates: s
   );
 }
 
-export async function seedAnalysisFixture(): Promise<AnalysisFixture> {
+async function deleteFixtureUser(pool: pg.Pool, fixture: AnalysisFixture): Promise<void> {
+  await pool.query(`DELETE FROM "User" WHERE "id" = $1 AND "email" = $2`, [
+    fixture.userId,
+    fixture.email,
+  ]);
+}
+
+export async function seedAnalysisFixture(email = E2E_EMAIL): Promise<AnalysisFixture> {
   const pool = createDbPool();
   const snapshotDates = fixtureMonths().map(toDateKey);
 
   try {
-    const user = await getOrCreateE2eUser(pool);
+    const user = await getOrCreateE2eUser(pool, email);
     await removeFixtureData(pool, user.id, snapshotDates);
 
     const accountInputs = [
@@ -196,7 +221,12 @@ export async function seedAnalysisFixture(): Promise<AnalysisFixture> {
       );
     }
 
-    return { snapshotDates };
+    return {
+      email,
+      expectedDefaultRange: expectedDefaultRange(snapshotDates),
+      userId: user.id,
+      snapshotDates,
+    };
   } finally {
     await pool.end();
   }
@@ -205,12 +235,32 @@ export async function seedAnalysisFixture(): Promise<AnalysisFixture> {
 export async function cleanupAnalysisFixture(fixture: AnalysisFixture) {
   const pool = createDbPool();
   try {
-    const user = await pool.query<{ id: string }>(`SELECT "id" FROM "User" WHERE "email" = $1`, [
-      E2E_EMAIL,
-    ]);
-    const userId = user.rows[0]?.id;
-    if (!userId) return;
-    await removeFixtureData(pool, userId, fixture.snapshotDates);
+    await deleteFixtureUser(pool, fixture);
+  } finally {
+    await pool.end();
+  }
+}
+
+export async function seedAnalysisEmptyFixture(): Promise<AnalysisFixture> {
+  const pool = createDbPool();
+  try {
+    const user = await getOrCreateE2eUser(pool, E2E_EMPTY_EMAIL);
+    await removeFixtureData(pool, user.id, []);
+    return {
+      email: E2E_EMPTY_EMAIL,
+      expectedDefaultRange: "YTD",
+      userId: user.id,
+      snapshotDates: [],
+    };
+  } finally {
+    await pool.end();
+  }
+}
+
+export async function cleanupAnalysisEmptyFixture(fixture: AnalysisFixture) {
+  const pool = createDbPool();
+  try {
+    await deleteFixtureUser(pool, fixture);
   } finally {
     await pool.end();
   }

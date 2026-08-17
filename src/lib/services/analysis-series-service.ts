@@ -4,7 +4,7 @@ import {
   getMonthsForRange,
   resolveAnalysisRange,
   type RangeLabel,
-} from "@/components/analysis/analysis-range";
+} from "@/lib/analysis-range";
 import {
   aggregateMonthlyChange,
   fillMonthRange,
@@ -15,13 +15,7 @@ import {
   computePerformanceAttribution,
   computeInvestmentReturn,
   computeInvestmentReturnSeries,
-  type MonthlyBucket,
-  type AnalysisKpis,
-  type CashFlowBucket,
-  type CumulativeGrowthPoint,
   type CategoryDataPoint,
-  type AttributionItem,
-  type ReturnTrendPoint,
   type MonthlyContribution,
 } from "@/lib/services/analysis-service";
 import type {
@@ -29,18 +23,7 @@ import type {
   RawHistoryData,
   AccountMonthlyContribution,
 } from "@/lib/services/history-service";
-
-export interface AnalysisRangeSeries {
-  buckets: MonthlyBucket[];
-  kpis: AnalysisKpis;
-  cashFlowBuckets: CashFlowBucket[];
-  cumulativeGrowth: CumulativeGrowthPoint[];
-  categoryHistory: CategoryDataPoint[];
-  attributionItems: AttributionItem[];
-  investmentReturnPct: number | null;
-  returnTrend: ReturnTrendPoint[];
-  rangeStartIso: string;
-}
+import type { AnalysisRangeSeries } from "@/lib/analysis-contract";
 
 /**
  * Replicates the former client-side AnalysisView useMemo chain exactly, per
@@ -59,7 +42,6 @@ export function computeAnalysisRangeSeries(
   cashFlowData: MonthlyContribution[],
   accountCashFlow: AccountMonthlyContribution[],
   rangeLabel: RangeLabel,
-  locale: string,
   now = new Date(),
 ): AnalysisRangeSeries {
   const { filteredSnapshots, rangeStart, rangeEnd, rangeStartIso } = resolveAnalysisRange(
@@ -74,7 +56,6 @@ export function computeAnalysisRangeSeries(
   const cashFlowBuckets = buildCashFlowBuckets(
     buckets,
     cashFlowData.filter((c) => c.monthKey >= rangeStartIso.slice(0, 7)),
-    locale,
   );
   const cumulativeGrowth = buildCumulativeGrowth(cashFlowBuckets);
 
@@ -106,7 +87,6 @@ export function computeAnalysisRangeSeries(
     rawHistory.accounts,
     accountCashFlow,
     buckets.map((b) => b.monthKey),
-    locale,
   );
 
   return {
@@ -127,7 +107,6 @@ export function computeAllRangeSeries(
   rawHistory: RawHistoryData,
   cashFlowData: MonthlyContribution[],
   accountCashFlow: AccountMonthlyContribution[],
-  locale: string,
   now = new Date(),
 ): Record<RangeLabel, AnalysisRangeSeries> {
   const result = {} as Record<RangeLabel, AnalysisRangeSeries>;
@@ -138,7 +117,6 @@ export function computeAllRangeSeries(
       cashFlowData,
       accountCashFlow,
       label,
-      locale,
       now,
     );
   }

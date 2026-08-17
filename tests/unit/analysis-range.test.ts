@@ -2,10 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { computePerformanceAttribution } from "@/lib/services/analysis-service";
 import {
   ANALYSIS_RANGES,
+  ANALYSIS_RANGE_LABELS,
   getMonthsForRange,
+  getMessageKeyForRange,
   pickDefaultRange,
   resolveAnalysisRange,
-} from "@/components/analysis/analysis-range";
+} from "@/lib/analysis-range";
 import type { AccountMonthlyContribution, SnapshotBreakdown } from "@/lib/services/history-service";
 
 const originalTimezone = process.env.TZ;
@@ -136,6 +138,32 @@ describe("ANALYSIS_RANGES", () => {
   it("defines the five ranges in selector order with their month counts", () => {
     expect(ANALYSIS_RANGES.map((r) => r.label)).toEqual(["YTD", "6M", "1Y", "2Y", "All"]);
     expect(ANALYSIS_RANGES.map((r) => r.months)).toEqual([0, 6, 12, 24, Infinity]);
+  });
+
+  it("carries the analysis translation messageKey for each range", () => {
+    expect(ANALYSIS_RANGES.map((r) => r.messageKey)).toEqual([
+      "rangeYTD",
+      "range6M",
+      "range1Y",
+      "range2Y",
+      "rangeAll",
+    ]);
+  });
+});
+
+describe("getMessageKeyForRange", () => {
+  it("maps each label to its analysis message key", () => {
+    expect(getMessageKeyForRange("YTD")).toBe("rangeYTD");
+    expect(getMessageKeyForRange("6M")).toBe("range6M");
+    expect(getMessageKeyForRange("1Y")).toBe("range1Y");
+    expect(getMessageKeyForRange("2Y")).toBe("range2Y");
+    expect(getMessageKeyForRange("All")).toBe("rangeAll");
+  });
+});
+
+describe("ANALYSIS_RANGE_LABELS", () => {
+  it("is the persisted-range allow-list for every declared range", () => {
+    expect(ANALYSIS_RANGE_LABELS).toEqual(ANALYSIS_RANGES.map((r) => r.label));
   });
 });
 

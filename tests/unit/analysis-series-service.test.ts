@@ -58,14 +58,7 @@ const NOW = new Date(2026, 6, 28, 12);
 
 describe("computeAllRangeSeries", () => {
   it("produces every one of the five ranges with the full series shape", () => {
-    const series = computeAllRangeSeries(
-      snapshots,
-      rawHistory,
-      cashFlowData,
-      accountCashFlow,
-      "en-US",
-      NOW,
-    );
+    const series = computeAllRangeSeries(snapshots, rawHistory, cashFlowData, accountCashFlow, NOW);
     expect(Object.keys(series)).toEqual(["YTD", "6M", "1Y", "2Y", "All"]);
     for (const label of ["YTD", "6M", "1Y", "2Y", "All"] as const) {
       expect(series[label]).toMatchObject({
@@ -81,17 +74,24 @@ describe("computeAllRangeSeries", () => {
   });
 });
 
+describe("locale-independent series", () => {
+  it("produces all five ranges from month keys without preformatted labels", () => {
+    const series = computeAllRangeSeries(snapshots, rawHistory, cashFlowData, accountCashFlow, NOW);
+    expect(Object.keys(series)).toEqual(["YTD", "6M", "1Y", "2Y", "All"]);
+    for (const label of ["YTD", "6M", "1Y", "2Y", "All"] as const) {
+      const s = series[label];
+      expect(s.cashFlowBuckets[0].monthKey).toBeTypeOf("string");
+      expect(s.cashFlowBuckets[0]).not.toHaveProperty("label");
+      expect(s.cumulativeGrowth[0]).not.toHaveProperty("label");
+      expect(s.returnTrend.length).toBeGreaterThan(0);
+      expect(s.returnTrend[0]).not.toHaveProperty("label");
+    }
+  });
+});
+
 describe("computeAnalysisRangeSeries — 1Y (now = Jul 2026)", () => {
   const s = () =>
-    computeAnalysisRangeSeries(
-      snapshots,
-      rawHistory,
-      cashFlowData,
-      accountCashFlow,
-      "1Y",
-      "en-US",
-      NOW,
-    );
+    computeAnalysisRangeSeries(snapshots, rawHistory, cashFlowData, accountCashFlow, "1Y", NOW);
 
   it("aligns buckets to the 1Y month window", () => {
     const series = s();
@@ -196,7 +196,6 @@ describe("computeAnalysisRangeSeries — Taiwan-day month boundary", () => {
       cashFlowData,
       accountCashFlow,
       "6M",
-      "en-US",
       JUST_AFTER_CRON,
     );
     expect(series.buckets.at(-1)?.monthKey).toBe("2026-09");
@@ -209,7 +208,6 @@ describe("computeAnalysisRangeSeries — Taiwan-day month boundary", () => {
       withSeptember,
       cashFlowData,
       accountCashFlow,
-      "en-US",
       JUST_AFTER_CRON,
     );
     const lastMonths = Object.values(all).map((s) => s.buckets.at(-1)?.monthKey);
@@ -219,15 +217,7 @@ describe("computeAnalysisRangeSeries — Taiwan-day month boundary", () => {
 
 describe("computeAnalysisRangeSeries — empty history", () => {
   it("returns empty/zeroed series without throwing", () => {
-    const s = computeAnalysisRangeSeries(
-      [],
-      { snapshots: [], accounts },
-      [],
-      [],
-      "YTD",
-      "en-US",
-      NOW,
-    );
+    const s = computeAnalysisRangeSeries([], { snapshots: [], accounts }, [], [], "YTD", NOW);
     expect(s.buckets).toHaveLength(7);
     expect(s.buckets.every((b) => b.isEmpty)).toBe(true);
     expect(s.kpis).toEqual({

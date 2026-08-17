@@ -14,9 +14,13 @@ import { Card } from "@/components/ui/card";
 import type { NormalizedSnapshot } from "@/lib/services/history-service";
 import { computeDrawdownSeries } from "@/lib/services/analysis-service";
 import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service";
-import type { AnalysisRangeSeries } from "@/lib/services/analysis-series-service";
-import type { AnalysisPayloadMeta } from "@/lib/services/analysis-payload-service";
-import { ANALYSIS_RANGES, type RangeLabel } from "./analysis-range";
+import type { AnalysisPayloadMeta, AnalysisRangeSeries } from "@/lib/analysis-contract";
+import {
+  ANALYSIS_RANGES,
+  ANALYSIS_RANGE_LABELS,
+  getMessageKeyForRange,
+  type RangeLabel,
+} from "@/lib/analysis-range";
 import {
   LazyAssetsLiabilitiesChart,
   LazyCashFlowChart,
@@ -64,31 +68,27 @@ export function AnalysisView({
   // lays them side-by-side, where the wider gap matches the column rhythm.
   const gridGapClass = isCompact ? "gap-3" : "gap-4 xl:gap-6";
   const stackGapClass = isCompact ? "space-y-3" : "space-y-6";
-  const [range, setRange] = usePersistedRange<RangeLabel>("analysis-view", meta.defaultRange);
+  const [range, setRange] = usePersistedRange<RangeLabel>(
+    "analysis-view",
+    meta.defaultRange,
+    ANALYSIS_RANGE_LABELS,
+  );
   const shouldReduceMotion = useReducedMotion();
   const rangeFadeTransition = shouldReduceMotion
     ? { duration: 0 }
     : { duration: 0.22, ease: [0.16, 1, 0.3, 1] as const };
 
-  const rangeLabelKey: Record<RangeLabel, string> = {
-    YTD: "rangeYTD",
-    "6M": "range6M",
-    "1Y": "range1Y",
-    "2Y": "range2Y",
-    All: "rangeAll",
-  };
-
   const rangeOptions: SegmentedOption<RangeLabel>[] = ANALYSIS_RANGES.map((r) => ({
     value: r.label,
-    label: t(rangeLabelKey[r.label] as Parameters<typeof t>[0]),
+    label: t(r.messageKey),
   }));
-  const activeRangeLabel = t(rangeLabelKey[range] as Parameters<typeof t>[0]);
+  const activeRangeLabel = t(getMessageKeyForRange(range));
 
   // All series are precomputed on the server per range; switching ranges is an
-  // O(1) lookup into the payload (the fade below animates the swap). The
-  // fallback covers a stale sessionStorage value from an older range set —
-  // without it an unknown label takes the whole route down.
-  const series = seriesByRange[range] ?? seriesByRange[meta.defaultRange];
+  // O(1) lookup into the payload (the fade below animates the swap). A stale
+  // sessionStorage label can never land here — usePersistedRange rejects
+  // anything outside ANALYSIS_RANGE_LABELS.
+  const series = seriesByRange[range];
 
   // Not precomputed per range: this is one scan over `snapshots`, which is
   // shipped in full for HistoryView anyway. Five server-side copies would cost
@@ -98,8 +98,8 @@ export function AnalysisView({
     [snapshots, series.rangeStartIso],
   );
 
-  const hasData = meta.hasSnapshots;
-  const latestSnapshotAt = meta.latestSnapshotAt;
+  const hasData = snapshots.length > 0;
+  const latestSnapshotAt = snapshots.at(-1)?.createdAt ?? null;
 
   // Analysis no longer shows History as a peer tab; History has its own route and
   // the dashboard links there directly. The /analysis#history deep link still

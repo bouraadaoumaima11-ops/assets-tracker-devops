@@ -229,8 +229,6 @@ export interface MonthlyContribution {
 export interface CashFlowBucket {
   /** "YYYY-MM" */
   monthKey: string;
-  /** Human-readable label (set by the caller via formatMonthLabel). */
-  label: string;
   /** Net cash deposits/withdrawals in baseCurrency. */
   contributions: number;
   /** deltaNetWorth − contributions: value created/destroyed by market movement. */
@@ -261,12 +259,10 @@ export interface CategoryDataPoint {
  *
  * @param buckets  Output of fillMonthRange() (padded, sorted asc).
  * @param contributions  Output of getMonthlyCashFlow() from history-service.ts.
- * @param locale   For formatMonthLabel.
  */
 export function buildCashFlowBuckets(
   buckets: MonthlyBucket[],
   contributions: MonthlyContribution[],
-  locale: string,
 ): CashFlowBucket[] {
   const contribMap = new Map(contributions.map((c) => [c.monthKey, c.contributions]));
 
@@ -274,7 +270,6 @@ export function buildCashFlowBuckets(
     const contrib = b.isEmpty ? 0 : (contribMap.get(b.monthKey) ?? 0);
     return {
       monthKey: b.monthKey,
-      label: formatMonthLabel(b.monthKey, locale),
       contributions: contrib,
       marketPerformance: b.deltaNetWorth - contrib,
       deltaNetWorth: b.deltaNetWorth,
@@ -287,8 +282,6 @@ export function buildCashFlowBuckets(
 export interface CumulativeGrowthPoint {
   /** "YYYY-MM" */
   monthKey: string;
-  /** Human-readable label (carried from the source CashFlowBucket). */
-  label: string;
   /** Running total of net cash deposited/withdrawn since the range start. */
   cumulativeContributions: number;
   /** Running total of market gains/losses since the range start. */
@@ -313,7 +306,6 @@ export function buildCumulativeGrowth(buckets: CashFlowBucket[]): CumulativeGrow
     market += b.marketPerformance;
     return {
       monthKey: b.monthKey,
-      label: b.label,
       cumulativeContributions: contrib,
       cumulativeMarket: market,
       cumulativeTotal: contrib + market,
@@ -620,8 +612,6 @@ export function computeInvestmentReturn(
 export interface ReturnTrendPoint {
   /** YYYY-MM. */
   monthKey: string;
-  /** Locale-formatted month label for the X axis. */
-  label: string;
   /** Half-weight Dietz return for the month as a fraction; null when the month is empty or its base ≤ 0. */
   monthlyReturn: number | null;
   /** Π(1 + rᵢ) − 1 over non-null months so far; null until the first computable month, carried forward through gaps. */
@@ -649,7 +639,6 @@ export function computeInvestmentReturnSeries(
   accounts: AccountMeta[],
   accountCashFlows: AccountMonthlyContribution[],
   monthKeys: string[],
-  locale = "en-US",
 ): ReturnTrendPoint[] {
   if (snapshots.length < 2) return [];
 
@@ -684,11 +673,10 @@ export function computeInvestmentReturnSeries(
   let index: number | null = null;
   let pendingCash = 0;
   return monthKeys.map((monthKey) => {
-    const label = formatMonthLabel(monthKey, locale);
     const endSnap = monthLast.get(monthKey);
     if (!endSnap) {
       if (prevEnd !== null) pendingCash += cashByMonth.get(monthKey) ?? 0;
-      return { monthKey, label, monthlyReturn: null, cumulativeReturn: index, isEmpty: true };
+      return { monthKey, monthlyReturn: null, cumulativeReturn: index, isEmpty: true };
     }
     const start = prevEnd ?? investmentValue(monthFirst.get(monthKey)!);
     const end = investmentValue(endSnap);
@@ -697,11 +685,11 @@ export function computeInvestmentReturnSeries(
     prevEnd = end;
     const base = start + cash / 2;
     if (base <= 0) {
-      return { monthKey, label, monthlyReturn: null, cumulativeReturn: index };
+      return { monthKey, monthlyReturn: null, cumulativeReturn: index };
     }
     const r = (end - start - cash) / base;
     index = index === null ? r : (1 + index) * (1 + r) - 1;
-    return { monthKey, label, monthlyReturn: r, cumulativeReturn: index };
+    return { monthKey, monthlyReturn: r, cumulativeReturn: index };
   });
 }
 
