@@ -16,13 +16,11 @@ async function AnalysisContent() {
   const userId = session.user.id;
 
   // The payload is the slowest read on this page (five DB queries + the
-  // per-range aggregation), so it starts as soon as its two inputs resolve
-  // rather than after every other await.
+  // per-range aggregation), so it starts as soon as its settings/base-currency
+  // input resolves rather than after every other await.
   const settingsP = getOrCreateSettings(userId);
   const localeP = getLocale();
-  const payloadP = Promise.all([settingsP, localeP]).then(([s, l]) =>
-    getCachedAnalysisPayload(userId, s.baseCurrency, l),
-  );
+  const payloadP = settingsP.then((s) => getCachedAnalysisPayload(userId, s.baseCurrency));
 
   const [
     t,

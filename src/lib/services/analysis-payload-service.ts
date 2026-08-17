@@ -5,34 +5,15 @@ import {
   getFullNormalizedHistory,
   getMonthlyCashFlow,
   getRawHistoryWithBreakdown,
-  type NormalizedSnapshot,
 } from "@/lib/services/history-service";
 import { getInvestmentCostBasisSummary } from "@/lib/services/investment-cost-basis-service";
-import {
-  computeAllRangeSeries,
-  type AnalysisRangeSeries,
-} from "@/lib/services/analysis-series-service";
-import { pickDefaultRange, type RangeLabel } from "@/components/analysis/analysis-range";
-import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service";
-
-export interface AnalysisPayloadMeta {
-  hasSnapshots: boolean;
-  latestSnapshotAt: string | null;
-  defaultRange: RangeLabel;
-}
-
-export interface AnalysisPayload {
-  seriesByRange: Record<RangeLabel, AnalysisRangeSeries>;
-  investmentCostBasis: InvestmentCostBasisSummary;
-  /** Full normalized history — used by the mobile #history tab (HistoryView). */
-  snapshots: NormalizedSnapshot[];
-  meta: AnalysisPayloadMeta;
-}
+import { computeAllRangeSeries } from "@/lib/services/analysis-series-service";
+import { pickDefaultRange } from "@/lib/analysis-range";
+import type { AnalysisPayload, AnalysisPayloadMeta } from "@/lib/analysis-contract";
 
 export async function getCachedAnalysisPayload(
   userId: string,
   baseCurrency: string,
-  locale: string,
 ): Promise<AnalysisPayload> {
   return unstable_cache(
     async () => {
@@ -55,19 +36,16 @@ export async function getCachedAnalysisPayload(
           rawHistory,
           cashFlowData,
           accountCashFlow,
-          locale,
           now,
         ),
         investmentCostBasis,
         snapshots,
         meta: {
-          hasSnapshots: snapshots.length > 0,
-          latestSnapshotAt: snapshots.at(-1)?.createdAt ?? null,
           defaultRange: pickDefaultRange(snapshots, now),
-        },
+        } satisfies AnalysisPayloadMeta,
       };
     },
-    ["analysis-payload", userId, baseCurrency, locale],
+    ["analysis-payload", userId, baseCurrency],
     {
       revalidate: 300,
       // All bundled reads convert at current FX (getAllExchangeRates +
