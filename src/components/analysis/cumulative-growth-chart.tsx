@@ -1,13 +1,14 @@
 "use client";
 
-import { memo, useEffect, useState, startTransition } from "react";
+import { memo, useEffect, useMemo, useState, startTransition } from "react";
 import { Area, CartesianGrid, ComposedChart, Line, ReferenceLine, XAxis, YAxis } from "recharts";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartEmptyState } from "./chart-empty-state";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { formatCurrency } from "@/lib/currencies";
 import { formatChartTick, getMonthTickInterval } from "@/lib/chart-formatters";
+import { formatMonthLabel } from "@/lib/services/analysis-service";
 import { usePrivacyMode } from "@/components/layout/privacy-mode-context";
 import { useDensity } from "@/components/layout/density-context";
 import { useChartAnimation } from "@/hooks/use-chart-animation";
@@ -21,7 +22,7 @@ interface Props {
 }
 
 interface TooltipPayload {
-  payload: CumulativeGrowthPoint;
+  payload: CumulativeGrowthPoint & { label: string };
 }
 
 function GrowthTooltip({
@@ -95,6 +96,7 @@ export const CumulativeGrowthChart = memo(function CumulativeGrowthChart({
   baseCurrency,
 }: Props) {
   const t = useTranslations("analysis");
+  const locale = useLocale();
   const { privacyMode } = usePrivacyMode();
   const { density } = useDensity();
   const chartHeight = density === "compact" ? 180 : 200;
@@ -103,6 +105,10 @@ export const CumulativeGrowthChart = memo(function CumulativeGrowthChart({
   const { isAnimationActive, onAnimationEnd } = useChartAnimation();
   useEffect(() => startTransition(() => setMounted(true)), []);
   const xAxisInterval = getMonthTickInterval(points.length, density === "compact" ? 5 : 6);
+  const chartData = useMemo(
+    () => points.map((p) => ({ ...p, label: formatMonthLabel(p.monthKey, locale) })),
+    [points, locale],
+  );
 
   return (
     <>
@@ -161,7 +167,7 @@ export const CumulativeGrowthChart = memo(function CumulativeGrowthChart({
                 initialDimension={{ width: 1, height: chartHeight }}
               >
                 <ComposedChart
-                  data={points}
+                  data={chartData}
                   stackOffset="sign"
                   margin={{ top: 8, right: 4, left: 0, bottom: 12 }}
                   {...crosshairHandlers}
