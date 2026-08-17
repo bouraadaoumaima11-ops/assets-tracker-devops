@@ -117,66 +117,56 @@ test("analysis falls back to the server default range for an unknown persisted r
   }
 });
 
-test("renders English month labels from the locale-independent payload", async ({
-  page,
-}, testInfo) => {
+test("renders both locales' month labels from one cached payload", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "chromium", "Populated Analysis QA is desktop-only.");
   test.skip(!hasAnalysisFixtureDatabase(), "Populated Analysis QA requires DATABASE_URL.");
+  // Both loads run as the same user inside the payload's 300s revalidate
+  // window, so the zh-TW render is served from the entry the en-US render
+  // filled. That shared entry is the point: if any locale-formatted value
+  // creeps back into the payload, the second assertion sees English labels.
+  // Seeding per locale would give each load its own cache key and prove nothing.
   const fixture = await seedAnalysisFixture();
 
   try {
     await authenticateAnalysisFixture(page.context(), fixture);
-    await setAnalysisFixtureLocale(page.context(), "en-US");
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.addInitScript(() =>
       sessionStorage.setItem("asset-tracker:range:analysis-view", "All"),
     );
+
+    await setAnalysisFixtureLocale(page.context(), "en-US");
     await page.goto("/analysis");
-    const cashFlowCard = page
+    const englishCard = page
       .locator('[data-slot="card"]')
       .filter({
         has: page.getByRole("heading", { name: "Cash Flow Decomposition", exact: true }),
       })
       .first();
     await expect(
-      cashFlowCard.getByRole("heading", { name: "Cash Flow Decomposition", exact: true }),
-    ).toBeVisible({
-      timeout: 20_000,
-    });
+      englishCard.getByRole("heading", { name: "Cash Flow Decomposition", exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
     await expect(
-      cashFlowCard.locator("svg").getByText(oldestMonthLabel(fixture.snapshotDates, "en-US"), {
+      englishCard.locator("svg").getByText(oldestMonthLabel(fixture.snapshotDates, "en-US"), {
         exact: true,
       }),
     ).toBeVisible();
-  } finally {
-    await cleanupAnalysisFixture(fixture);
-  }
-});
 
-test("renders Traditional Chinese month labels from the same locale-independent payload", async ({
-  page,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== "chromium", "Populated Analysis QA is desktop-only.");
-  test.skip(!hasAnalysisFixtureDatabase(), "Populated Analysis QA requires DATABASE_URL.");
-  const fixture = await seedAnalysisFixture();
-
-  try {
-    await authenticateAnalysisFixture(page.context(), fixture);
     await setAnalysisFixtureLocale(page.context(), "zh-TW");
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.addInitScript(() =>
-      sessionStorage.setItem("asset-tracker:range:analysis-view", "All"),
-    );
-    await page.goto("/analysis");
-    const cashFlowCard = page
+    await page.reload();
+    const chineseCard = page
       .locator('[data-slot="card"]')
       .filter({ has: page.getByRole("heading", { name: "現金流分解", exact: true }) })
       .first();
     await expect(
-      cashFlowCard.locator("svg").getByText(oldestMonthLabel(fixture.snapshotDates, "zh-TW"), {
+      chineseCard.locator("svg").getByText(oldestMonthLabel(fixture.snapshotDates, "zh-TW"), {
         exact: true,
       }),
     ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      chineseCard.locator("svg").getByText(oldestMonthLabel(fixture.snapshotDates, "en-US"), {
+        exact: true,
+      }),
+    ).toHaveCount(0);
   } finally {
     await cleanupAnalysisFixture(fixture);
   }

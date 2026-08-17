@@ -17,6 +17,9 @@ export const TREND_RANGES: TrendRange[] = [
  */
 export const DEFAULT_TREND_RANGE = "3M";
 
+/** Allow-list for the persisted range (see usePersistedRange). */
+export const TREND_RANGE_LABELS: readonly string[] = TREND_RANGES.map((r) => r.label);
+
 /**
  * Find the chart point matching an externally-driven active date (e.g. a
  * hovered heatmap cell). Returns undefined when there is no active date or no

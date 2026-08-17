@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { computePerformanceAttribution } from "@/lib/services/analysis-service";
 import {
   ANALYSIS_RANGES,
+  ANALYSIS_RANGE_LABELS,
   getMonthsForRange,
   getMessageKeyForRange,
   pickDefaultRange,
-  resolveActiveRange,
   resolveAnalysisRange,
 } from "@/lib/analysis-range";
 import type { AccountMonthlyContribution, SnapshotBreakdown } from "@/lib/services/history-service";
@@ -161,16 +161,9 @@ describe("getMessageKeyForRange", () => {
   });
 });
 
-describe("resolveActiveRange", () => {
-  it("returns the stored label when it names a known range", () => {
-    for (const label of ["YTD", "6M", "1Y", "2Y", "All"] as const) {
-      expect(resolveActiveRange(label, "YTD")).toBe(label);
-    }
-  });
-
-  it("falls back to the default when the stored label is unknown", () => {
-    expect(resolveActiveRange("BOGUS_RANGE", "YTD")).toBe("YTD");
-    expect(resolveActiveRange("", "6M")).toBe("6M");
+describe("ANALYSIS_RANGE_LABELS", () => {
+  it("is the persisted-range allow-list for every declared range", () => {
+    expect(ANALYSIS_RANGE_LABELS).toEqual(ANALYSIS_RANGES.map((r) => r.label));
   });
 });
 

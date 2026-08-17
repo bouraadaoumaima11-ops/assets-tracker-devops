@@ -17,8 +17,8 @@ import type { InvestmentCostBasisSummary } from "@/lib/services/analysis-service
 import type { AnalysisPayloadMeta, AnalysisRangeSeries } from "@/lib/analysis-contract";
 import {
   ANALYSIS_RANGES,
+  ANALYSIS_RANGE_LABELS,
   getMessageKeyForRange,
-  resolveActiveRange,
   type RangeLabel,
 } from "@/lib/analysis-range";
 import {
@@ -68,22 +68,27 @@ export function AnalysisView({
   // lays them side-by-side, where the wider gap matches the column rhythm.
   const gridGapClass = isCompact ? "gap-3" : "gap-4 xl:gap-6";
   const stackGapClass = isCompact ? "space-y-3" : "space-y-6";
-  const [range, setRange] = usePersistedRange<RangeLabel>("analysis-view", meta.defaultRange);
+  const [range, setRange] = usePersistedRange<RangeLabel>(
+    "analysis-view",
+    meta.defaultRange,
+    ANALYSIS_RANGE_LABELS,
+  );
   const shouldReduceMotion = useReducedMotion();
   const rangeFadeTransition = shouldReduceMotion
     ? { duration: 0 }
     : { duration: 0.22, ease: [0.16, 1, 0.3, 1] as const };
 
-  const activeRange = resolveActiveRange(range, meta.defaultRange);
   const rangeOptions: SegmentedOption<RangeLabel>[] = ANALYSIS_RANGES.map((r) => ({
     value: r.label,
     label: t(r.messageKey),
   }));
-  const activeRangeLabel = t(getMessageKeyForRange(activeRange));
+  const activeRangeLabel = t(getMessageKeyForRange(range));
 
   // All series are precomputed on the server per range; switching ranges is an
-  // O(1) lookup into the payload (the fade below animates the swap).
-  const series = seriesByRange[activeRange];
+  // O(1) lookup into the payload (the fade below animates the swap). A stale
+  // sessionStorage label can never land here — usePersistedRange rejects
+  // anything outside ANALYSIS_RANGE_LABELS.
+  const series = seriesByRange[range];
 
   // Not precomputed per range: this is one scan over `snapshots`, which is
   // shipped in full for HistoryView anyway. Five server-side copies would cost
@@ -147,7 +152,7 @@ export function AnalysisView({
             variant="pill"
             size="sm"
             options={rangeOptions}
-            value={activeRange}
+            value={range}
             onValueChange={setRange}
             aria-label={t("title")}
             className="flex-nowrap bg-background/80 dark:bg-card/70 ring-1 ring-border/50 backdrop-blur-md"
@@ -159,7 +164,7 @@ export function AnalysisView({
           <AnalysisEmptyState hasAccounts={hasAccounts} />
         ) : (
           <motion.div
-            key={activeRange}
+            key={range}
             initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             transition={rangeFadeTransition}

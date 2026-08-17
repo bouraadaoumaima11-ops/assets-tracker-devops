@@ -71,6 +71,9 @@ export const ANALYSIS_RANGES = [
 
 export type RangeLabel = (typeof ANALYSIS_RANGES)[number]["label"];
 
+/** Allow-list for the persisted range (see usePersistedRange). */
+export const ANALYSIS_RANGE_LABELS: readonly RangeLabel[] = ANALYSIS_RANGES.map((r) => r.label);
+
 export function getMonthsForRange(label: RangeLabel): number {
   return ANALYSIS_RANGES.find((r) => r.label === label)!.months;
 }
@@ -79,10 +82,6 @@ export function getMessageKeyForRange(label: RangeLabel): string {
   return (
     ANALYSIS_RANGES.find((r) => r.label === label)?.messageKey ?? ANALYSIS_RANGES[0].messageKey
   );
-}
-
-export function resolveActiveRange(stored: string, fallback: RangeLabel): RangeLabel {
-  return ANALYSIS_RANGES.find((r) => r.label === stored)?.label ?? fallback;
 }
 
 /**
