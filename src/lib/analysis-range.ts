@@ -62,17 +62,27 @@ export function resolveAnalysisRange<T extends { date: string }>(
 }
 
 export const ANALYSIS_RANGES = [
-  { label: "YTD", months: 0 },
-  { label: "6M", months: 6 },
-  { label: "1Y", months: 12 },
-  { label: "2Y", months: 24 },
-  { label: "All", months: Infinity },
+  { label: "YTD", months: 0, messageKey: "rangeYTD" },
+  { label: "6M", months: 6, messageKey: "range6M" },
+  { label: "1Y", months: 12, messageKey: "range1Y" },
+  { label: "2Y", months: 24, messageKey: "range2Y" },
+  { label: "All", months: Infinity, messageKey: "rangeAll" },
 ] as const;
 
 export type RangeLabel = (typeof ANALYSIS_RANGES)[number]["label"];
 
 export function getMonthsForRange(label: RangeLabel): number {
   return ANALYSIS_RANGES.find((r) => r.label === label)!.months;
+}
+
+export function getMessageKeyForRange(label: RangeLabel): string {
+  return (
+    ANALYSIS_RANGES.find((r) => r.label === label)?.messageKey ?? ANALYSIS_RANGES[0].messageKey
+  );
+}
+
+export function resolveActiveRange(stored: string, fallback: RangeLabel): RangeLabel {
+  return ANALYSIS_RANGES.find((r) => r.label === stored)?.label ?? fallback;
 }
 
 /**
