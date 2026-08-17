@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useState, startTransition } from "react";
+import { memo, useEffect, useMemo, useState, startTransition } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -11,11 +11,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartEmptyState } from "./chart-empty-state";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { getMonthTickInterval } from "@/lib/chart-formatters";
+import { formatMonthLabel } from "@/lib/services/analysis-service";
 import { usePrivacyMode } from "@/components/layout/privacy-mode-context";
 import { useDensity } from "@/components/layout/density-context";
 import { useChartAnimation } from "@/hooks/use-chart-animation";
@@ -28,7 +29,7 @@ interface Props {
 }
 
 interface TooltipPayload {
-  payload: ReturnTrendPoint;
+  payload: ReturnTrendPoint & { label: string };
 }
 
 const formatPct = (v: number) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
@@ -85,6 +86,7 @@ const returnConfig = {} satisfies ChartConfig;
 
 export const ReturnTrendChart = memo(function ReturnTrendChart({ points }: Props) {
   const t = useTranslations("analysis");
+  const locale = useLocale();
   const { privacyMode } = usePrivacyMode();
   const { density } = useDensity();
   const chartHeight = density === "compact" ? 180 : 200;
@@ -95,6 +97,10 @@ export const ReturnTrendChart = memo(function ReturnTrendChart({ points }: Props
   const xAxisInterval = getMonthTickInterval(points.length, density === "compact" ? 5 : 6);
 
   const hasData = points.some((p) => p.monthlyReturn !== null);
+  const chartData = useMemo(
+    () => points.map((p) => ({ ...p, label: formatMonthLabel(p.monthKey, locale) })),
+    [points, locale],
+  );
 
   return (
     <>
@@ -143,7 +149,7 @@ export const ReturnTrendChart = memo(function ReturnTrendChart({ points }: Props
                 initialDimension={{ width: 1, height: chartHeight }}
               >
                 <ComposedChart
-                  data={points}
+                  data={chartData}
                   margin={{ top: 8, right: 4, left: 0, bottom: 12 }}
                   {...crosshairHandlers}
                 >
