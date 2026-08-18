@@ -6,6 +6,10 @@ pipeline {
         NOTIFICATION_EMAIL = 'bouraadaoumaima11@exemple.com'
     }
 
+    tools {
+        sonarQube 'sonar-scanner'
+    }
+
     stages {
         stage('1. Récupération du Code') {
             steps {
@@ -64,15 +68,9 @@ pipeline {
     post {
         success {
             echo '🎉 Pipeline exécuté avec succès !'
-            mail to: "${env.NOTIFICATION_EMAIL}",
-                 subject: "✅ SUCCÈS : Pipeline Assets Tracker #${env.BUILD_NUMBER}",
-                 body: "Le pipeline s'est terminé avec succès ! Consultez le build : ${env.BUILD_URL}"
         }
         failure {
             echo '❌ Échec du pipeline.'
-            mail to: "${env.NOTIFICATION_EMAIL}",
-                 subject: "❌ ÉCHEC : Pipeline Assets Tracker #${env.BUILD_NUMBER}",
-                 body: "Le pipeline a échoué. Consultez la console : ${env.BUILD_URL}console"
         }
     }
 }
