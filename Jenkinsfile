@@ -3,7 +3,8 @@ pipeline {
 
     environment {
         SONAR_SERVER = 'SonarQube'
-        NOTIFICATION_EMAIL = 'bouraadaoumaima11@exemple.com' 
+        NOTIFICATION_EMAIL = 'bouraadaoumaima11@exemple.com'
+    }
 
     stages {
         stage('1. Récupération du Code') {
