@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         SONAR_SERVER = 'SonarQube'
-        NOTIFICATION_EMAIL = 'votre.email@exemple.com' // Remplace par ton email
+        NOTIFICATION_EMAIL = 'bouraadaoumaima11@exemple.com' // Remplace par ton email
     }
 
     tools {
