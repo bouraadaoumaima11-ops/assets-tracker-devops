@@ -3,11 +3,6 @@ pipeline {
 
     environment {
         SONAR_SERVER = 'SonarQube'
-        NOTIFICATION_EMAIL = 'bouraadaoumaima11@exemple.com'
-    }
-
-    tools {
-        sonarQube 'sonar-scanner'
     }
 
     stages {
@@ -21,8 +16,11 @@ pipeline {
         stage('2. Analyse Qualité du Code (SonarQube)') {
             steps {
                 echo '🔍 Analyse du code source avec SonarQube...'
-                withSonarQubeEnv("${SONAR_SERVER}") {
-                    sh 'sonar-scanner -Dsonar.projectKey=assets-tracker -Dsonar.sources=.'
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+                    withSonarQubeEnv("${SONAR_SERVER}") {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=assets-tracker -Dsonar.sources=."
+                    }
                 }
             }
         }
