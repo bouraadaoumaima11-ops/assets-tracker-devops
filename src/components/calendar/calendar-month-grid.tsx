@@ -214,9 +214,14 @@ export function CalendarMonthGrid({
                       onKeyDown={(event) => handleKeyDown(event, date, index)}
                       className={cn(
                         "flex min-h-16 w-full flex-col items-center gap-1 px-1.5 py-2 text-center outline-none motion-fast sm:min-h-20 sm:items-start sm:text-left",
-                        "hover:bg-muted/60 focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                        "transition-colors duration-150 ease-[var(--ease-micro)]",
+                        "motion-reduce:transition-none",
+                        "hover:bg-foreground/8",
+                        "active:bg-foreground/12",
+                        "focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                         !isCurrentMonth && "text-muted-foreground",
-                        isSelected && "relative z-10 bg-primary/8 ring-2 ring-inset ring-primary",
+                        isSelected &&
+                          "relative z-10 bg-primary/8 ring-2 ring-inset ring-primary hover:bg-primary/15",
                       )}
                     >
                       <span className="flex min-h-7 flex-col items-center sm:items-start">
