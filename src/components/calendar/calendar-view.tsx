@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useRef, useState } from "react";
+import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
@@ -26,7 +26,6 @@ type CalendarViewProps = {
 
 export function CalendarView({
   initialEntries,
-  month,
   selectedDate,
   today,
   locale,
@@ -39,17 +38,24 @@ export function CalendarView({
   const agendaRef = useRef<HTMLDivElement>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<SerializedCalendarEntry | null>(null);
+  const [, startTransition] = useTransition();
+  const [optimisticDate, setOptimisticDate] = useOptimistic(selectedDate);
+  const effectiveDate = optimisticDate;
+  const effectiveMonth = effectiveDate.slice(0, 7);
 
   function navigate(date: string) {
-    router.replace(
-      buildCalendarNavigationHref({
-        pathname,
-        search: window.location.search,
-        hash: window.location.hash,
-        date,
-      }),
-      { scroll: false },
-    );
+    startTransition(() => {
+      setOptimisticDate(date);
+      router.replace(
+        buildCalendarNavigationHref({
+          pathname,
+          search: window.location.search,
+          hash: window.location.hash,
+          date,
+        }),
+        { scroll: false },
+      );
+    });
   }
 
   function selectDate(date: string, source: "pointer" | "keyboard") {
@@ -98,7 +104,7 @@ export function CalendarView({
             mobileTouch
             aria-label={t("previousMonth")}
             title={t("previousMonth")}
-            onClick={() => navigate(moveCalendarMonth(selectedDate, -1))}
+            onClick={() => navigate(moveCalendarMonth(effectiveDate, -1))}
           >
             <ChevronLeft />
           </Button>
@@ -112,7 +118,7 @@ export function CalendarView({
             mobileTouch
             aria-label={t("nextMonth")}
             title={t("nextMonth")}
-            onClick={() => navigate(moveCalendarMonth(selectedDate, 1))}
+            onClick={() => navigate(moveCalendarMonth(effectiveDate, 1))}
           >
             <ChevronRight />
           </Button>
@@ -126,8 +132,8 @@ export function CalendarView({
 
       <div className="gap-4 md:grid md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)] md:items-start">
         <CalendarMonthGrid
-          month={month}
-          selectedDate={selectedDate}
+          month={effectiveMonth}
+          selectedDate={effectiveDate}
           today={today}
           entriesByDate={entriesByDate}
           locale={locale}
@@ -135,8 +141,8 @@ export function CalendarView({
         />
         <div ref={agendaRef} className="mt-4 scroll-mt-4 md:sticky md:top-4 md:mt-0">
           <CalendarDayAgenda
-            date={selectedDate}
-            entries={entriesByDate.get(selectedDate) ?? []}
+            date={effectiveDate}
+            entries={entriesByDate.get(effectiveDate) ?? []}
             locale={locale}
             onAdd={addEntry}
             onEdit={editEntry}
