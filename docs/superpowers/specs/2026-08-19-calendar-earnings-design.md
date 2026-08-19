@@ -16,15 +16,15 @@
 
 ## 決策紀錄
 
-| 面向 | 決策 |
-|---|---|
-| 資料來源 | 追蹤清單（`StockWatchItem`）+ 手動搜尋加入 |
-| 手動加入的 symbol | 存 DB（獨立表，見資料模型） |
-| 時間粒度 | 當天日期；顯示在「實際事件發生日」 |
-| 時區 | 先使用台灣時區（UTC+8），顯示在實際發生日 |
-| 盤前/盤後時段 | 順手帶出，顯示在 agenda 與 tooltip（不影響行事曆位置） |
-| 整合方式 | 唯讀覆蓋層（不寫入 CalendarEntry） |
-| 股票選擇 | 使用者個別勾選要顯示財報的股票 |
+| 面向              | 決策                                                   |
+| ----------------- | ------------------------------------------------------ |
+| 資料來源          | 追蹤清單（`StockWatchItem`）+ 手動搜尋加入             |
+| 手動加入的 symbol | 存 DB（獨立表，見資料模型）                            |
+| 時間粒度          | 當天日期；顯示在「實際事件發生日」                     |
+| 時區              | 先使用台灣時區（UTC+8），顯示在實際發生日              |
+| 盤前/盤後時段     | 順手帶出，顯示在 agenda 與 tooltip（不影響行事曆位置） |
+| 整合方式          | 唯讀覆蓋層（不寫入 CalendarEntry）                     |
+| 股票選擇          | 使用者個別勾選要顯示財報的股票                         |
 
 ## 資料模型
 
@@ -64,32 +64,41 @@ model CalendarEarningsWatch {
 Calendar 頁面 (server component)
   ↓ 讀 CalendarEarningsWatch 的 symbols（該 user）
   ↓ getCalendarEarnings(userId, symbols, from, to)
-  ↓   yahooFinance.earnings(symbols)   // 沿用 getYahooClient()
+  ↓   yahooFinance.quote(symbols)   // 沿用 getYahooClient() 與既有 fetchYahooQuotes 路徑
+  ↓   讀取 earningsCallTimestampStart / earningsTimestamp
   ↓   過濾 [from, to] 內財報日 + 換算台灣日
   ↓   unstable_cache / cacheTag（數小時）
   ↓ 回傳 Map<date, { symbol, name, hour?, epsEstimate? }[]>
 ```
 
-- **沿用既有 `getYahooClient()`**，無新增 dependency。
+- **沿用既有 `getYahooClient()`** 與 `fetchYahooQuotes` 相同的 `quote()` 呼叫路徑，無新增 dependency、無新 lib method。
 - **快取**：仿照 `getCalendarEntriesInRange`，用 `unstable_cache` + `cacheTag`，`cacheLife("hours")`。財報日不會頻繁變動。
 - **Rate limit / refresh credit**：仿照既有 market-data 路徑（`marketData: "refresh-credit"`）或獨立 rate-limit key，避免濫用。
 
-### Yahoo `earnings` 回傳
+### Yahoo `quote()` 回傳（財報相關欄位）
 
-`yahooFinance.earnings(symbols)` 回傳每檔的 `earningsDate: [Date, Date]`（分別對應盤後、盤前）與 `hour`（如 `"AMC"` / `"BMO"` / `"AMC+DA"`）。本設計使用：
+`yahooFinance.quote(symbols)` 回傳（與 `fetchYahooQuotes` 同一呼叫，已驗證可用）：
 
-- `earningsDate` + `hour` 判斷盤前（BMO）/ 盤後（AMC）。
-- 回傳中若有 `epsEstimate` 等欄位則順手帶出顯示。
+- `earningsTimestamp?: Date` — 下次財報公告時間（**可能 ±2 天不準**，Yahoo 已知限制）。
+- `earningsCallTimestampStart?: Date` / `earningsCallTimestampEnd?: Date` — **財報電話會議**的實際時間戳（含時刻，較精準，可推導盤前/盤後）。
+- `isEarningsDateEstimate?: boolean` — 財報日是否為估計值。
+- `epsForward?` / `epsTrailingTwelveMonths?` — EPS 資料（順手帶出）。
+
+本設計：
+
+- 優先使用 `earningsCallTimestampStart`（精準含時刻）推導盤前(BMO)/盤後(AMC)。
+- 無 call timestamp 時退回 `earningsTimestamp`（僅當日，無時段 → 保守顯示）。
+- `isEarningsDateEstimate` 為 true 時在 UI 標示「估計」。
 
 ## 時區與日期換算（核心規則）
 
 財報以**美股（美東 ET）時段**為基準，顯示在**台灣行事曆日（UTC+8，實際事件發生日）**。換算規則：
 
-| 美股時段 | 美東時間 | 台灣時間（近似） | 台灣行事曆日 |
-|---|---|---|---|
-| 盤前 (BMO) | 08:00 ET | 20:00–21:00 同日 | **當日** |
-| 盤後 (AMC) | 16:00 ET | 次日 04:00–05:00 | **次日** |
-| 盤中 / 時間未定 | — | — | 美東當日 → 台灣當日（保守，不跨日） |
+| 美股時段        | 美東時間 | 台灣時間（近似） | 台灣行事曆日                        |
+| --------------- | -------- | ---------------- | ----------------------------------- |
+| 盤前 (BMO)      | 08:00 ET | 20:00–21:00 同日 | **當日**                            |
+| 盤後 (AMC)      | 16:00 ET | 次日 04:00–05:00 | **次日**                            |
+| 盤中 / 時間未定 | —        | —                | 美東當日 → 台灣當日（保守，不跨日） |
 
 **規則**：
 
