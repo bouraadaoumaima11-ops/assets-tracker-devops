@@ -192,6 +192,7 @@ describe("public Demo route policy", () => {
     );
 
     expect(actual).toEqual({
+      "src/app/api/calendar-earnings-watch/route.ts": { POST: "refresh-credit" },
       "src/app/api/stocks/quote/route.ts": { GET: "refresh-credit" },
       "src/app/api/stocks/route.ts": { POST: "refresh-credit" },
     });

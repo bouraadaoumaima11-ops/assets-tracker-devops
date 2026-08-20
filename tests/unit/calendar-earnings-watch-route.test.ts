@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   addCalendarEarningsWatch: vi.fn(),
   removeCalendarEarningsWatch: vi.fn(),
   invalidateCalendarEarningsCaches: vi.fn(),
+  fetchEquityQuote: vi.fn(),
   principal: { kind: "formal" as const, userId: "user_1" } as
     | { kind: "formal"; userId: string }
     | { kind: "demo"; userId: string; expiresAt: Date },
@@ -18,10 +19,11 @@ vi.mock("@/lib/api-handler", () => ({
         context: unknown,
         userId: string,
         principal: typeof h.principal,
+        consumeRefreshCredit?: () => Promise<Response | null>,
       ) => Promise<Response>,
     ) =>
     (request: Request, context: unknown) =>
-      handler(request, context, "user_1", h.principal),
+      handler(request, context, "user_1", h.principal, async () => null),
 }));
 
 vi.mock("@/lib/services/calendar-earnings-service", () => ({
@@ -29,6 +31,10 @@ vi.mock("@/lib/services/calendar-earnings-service", () => ({
   addCalendarEarningsWatch: h.addCalendarEarningsWatch,
   removeCalendarEarningsWatch: h.removeCalendarEarningsWatch,
   invalidateCalendarEarningsCaches: h.invalidateCalendarEarningsCaches,
+}));
+
+vi.mock("@/lib/services/stock-watch-service", () => ({
+  fetchEquityQuote: h.fetchEquityQuote,
 }));
 
 import { DELETE, GET, POST } from "@/app/api/calendar-earnings-watch/route";
@@ -53,6 +59,13 @@ describe("calendar earnings watch routes", () => {
     h.getCalendarEarningsWatch.mockResolvedValue([]);
     h.addCalendarEarningsWatch.mockResolvedValue(watchItem);
     h.removeCalendarEarningsWatch.mockResolvedValue(undefined);
+    h.fetchEquityQuote.mockResolvedValue({
+      symbol: "AAPL",
+      name: "Apple Inc.",
+      exchange: "NasdaqGS",
+      currency: "USD",
+      price: 200,
+    });
     h.principal = { kind: "formal", userId: "user_1" };
   });
 
@@ -102,6 +115,67 @@ describe("calendar earnings watch routes", () => {
     expect(response.status).toBe(400);
     expect(h.addCalendarEarningsWatch).not.toHaveBeenCalled();
   });
+
+  it("rejects non-US equity symbols before creating a watch item", async () => {
+    h.fetchEquityQuote.mockResolvedValueOnce({
+      symbol: "2330.TW",
+      name: "Taiwan Semiconductor",
+      exchange: "Taiwan Stock Exchange",
+      currency: "TWD",
+      price: 900,
+    });
+
+    const response = await POST(
+      jsonRequest({ symbol: "2330.TW", name: "Taiwan Semiconductor", source: "manual" }),
+      undefined,
+    );
+
+    expect(response.status).toBe(400);
+    expect(h.addCalendarEarningsWatch).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-US exchanges that contain a US venue marker", async () => {
+    h.fetchEquityQuote.mockResolvedValueOnce({
+      symbol: "XYZ.ST",
+      name: "Example Stockholm",
+      exchange: "Nasdaq Stockholm",
+      currency: "SEK",
+      price: 100,
+    });
+
+    const response = await POST(
+      jsonRequest({ symbol: "XYZ.ST", name: "Example Stockholm", source: "manual" }),
+      undefined,
+    );
+
+    expect(response.status).toBe(400);
+    expect(h.addCalendarEarningsWatch).not.toHaveBeenCalled();
+  });
+
+  it.each(["NYSE American", "Cboe BZX", "Cboe US", "BTS", "NCM", "NGM", "NASDAQ"])(
+    "accepts US full exchange name %s",
+    async (exchange) => {
+      h.fetchEquityQuote.mockResolvedValueOnce({
+        symbol: "AAPL",
+        name: "Apple Inc.",
+        exchange,
+        currency: "USD",
+        price: 200,
+      });
+
+      const response = await POST(
+        jsonRequest({ symbol: "AAPL", name: "Apple Inc.", source: "manual" }),
+        undefined,
+      );
+
+      expect(response.status).toBe(201);
+      expect(h.addCalendarEarningsWatch).toHaveBeenCalledWith("user_1", {
+        symbol: "AAPL",
+        name: "Apple Inc.",
+        source: "manual",
+      });
+    },
+  );
 
   it("removes a watch item (uppercased symbol) and invalidates caches", async () => {
     const response = await DELETE(

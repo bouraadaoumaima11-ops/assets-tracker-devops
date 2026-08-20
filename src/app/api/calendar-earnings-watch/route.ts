@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/api-handler";
 import { ok, failure, validationError } from "@/lib/api-responses";
 import { createCalendarEarningsWatchSchema } from "@/lib/validators";
+import { isUsEquityExchange } from "@/lib/calendar-earnings";
+import { fetchEquityQuote } from "@/lib/services/stock-watch-service";
 import {
   addCalendarEarningsWatch,
   getCalendarEarningsWatch,
@@ -17,15 +19,32 @@ export const GET = withAuth(
 );
 
 export const POST = withAuth(
-  async (request, _ctx, userId, principal) => {
+  async (request, _ctx, userId, principal, consumeRefreshCredit) => {
     const body = await request.json();
     const parsed = createCalendarEarningsWatchSchema.safeParse(body);
     if (!parsed.success) return validationError(parsed.error);
+
+    if (!consumeRefreshCredit) return failure("Market data access is unavailable", 500);
+    const limitedRefresh = await consumeRefreshCredit();
+    if (limitedRefresh) return limitedRefresh;
+
+    let quote;
+    try {
+      quote = await fetchEquityQuote(parsed.data.symbol, {
+        redactIdentifiers: principal.kind === "demo",
+      });
+    } catch {
+      return failure("US market validation is temporarily unavailable", 503);
+    }
+    if (!quote || !isUsEquityExchange(quote.exchange)) {
+      return failure("Only US stock symbols can be added.", 400);
+    }
+
     const item = await addCalendarEarningsWatch(userId, parsed.data);
     invalidateCalendarEarningsCaches(userId, principal);
     return ok(item, { status: 201 });
   },
-  { demo: "allow" },
+  { demo: "allow", marketData: "refresh-credit" },
 );
 
 export const DELETE = withAuth(
