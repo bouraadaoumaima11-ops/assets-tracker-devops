@@ -6,12 +6,7 @@ import { invalidateScopedTag } from "@/lib/demo/demo-cache";
 import { prisma } from "@/lib/prisma";
 import { serializeCalendarEntry, type SerializedCalendarEntry } from "@/lib/types";
 
-export async function getCalendarEntriesInRange(
-  userId: string,
-  fromDate: Date,
-  toDate: Date,
-): Promise<SerializedCalendarEntry[]> {
-  "use cache";
+function normalizeCalendarRange(fromDate: Date, toDate: Date) {
   const from = formatDateOnly(fromDate);
   const to = formatDateOnly(toDate);
   const fromDateOnly = parseDateOnly(from);
@@ -20,10 +15,12 @@ export async function getCalendarEntriesInRange(
   if (!fromDateOnly || !toDateOnly || rangeLength < 1 || rangeLength > 42) {
     throw new RangeError("Calendar range must contain 1 through 42 inclusive dates");
   }
-  cacheTag("calendar-entries");
-  cacheTag(`calendar-entries:${userId}`);
-  cacheLife("hours");
 
+  return { fromDateOnly, toDateOnly };
+}
+
+async function queryCalendarEntriesInRange(userId: string, fromDate: Date, toDate: Date) {
+  const { fromDateOnly, toDateOnly } = normalizeCalendarRange(fromDate, toDate);
   const entries = await prisma.calendarEntry.findMany({
     where: { userId, eventDate: { gte: fromDateOnly, lte: toDateOnly } },
     orderBy: [
@@ -34,6 +31,28 @@ export async function getCalendarEntriesInRange(
     ],
   });
   return entries.map(serializeCalendarEntry);
+}
+
+export async function getFreshCalendarEntriesInRange(
+  userId: string,
+  fromDate: Date,
+  toDate: Date,
+): Promise<SerializedCalendarEntry[]> {
+  return queryCalendarEntriesInRange(userId, fromDate, toDate);
+}
+
+export async function getCalendarEntriesInRange(
+  userId: string,
+  fromDate: Date,
+  toDate: Date,
+): Promise<SerializedCalendarEntry[]> {
+  "use cache";
+  normalizeCalendarRange(fromDate, toDate);
+  cacheTag("calendar-entries");
+  cacheTag(`calendar-entries:${userId}`);
+  cacheLife("hours");
+
+  return queryCalendarEntriesInRange(userId, fromDate, toDate);
 }
 
 export function invalidateCalendarEntryCaches(userId: string, principal: AuthPrincipal) {
