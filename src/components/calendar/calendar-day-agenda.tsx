@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedCalendarEntry } from "@/lib/types";
@@ -34,10 +35,19 @@ type CalendarDayAgendaProps = {
   onDeleted: () => void;
 };
 
+function sessionLabel(
+  t: (key: "beforeOpen" | "afterClose") => string,
+  session: CalendarEarningsItem["session"],
+): string {
+  if (session === "BMO") return t("beforeOpen");
+  if (session === "AMC") return t("afterClose");
+  return "";
+}
+
 export function CalendarDayAgenda({
   date,
   entries,
-  earnings: _earnings,
+  earnings,
   locale,
   onAdd,
   onEdit,
@@ -89,6 +99,27 @@ export function CalendarDayAgenda({
           </span>
         </div>
       </header>
+
+      {earnings && earnings.length > 0 && (
+        <section aria-label={t("earningsSection")} className="border-b px-4 py-3">
+          <h3 className="text-xs font-semibold text-chart-5">{t("earnings")}</h3>
+          <ul className="mt-2 space-y-2">
+            {earnings.map((e) => (
+              <li key={e.symbol} className="flex items-center gap-2 text-sm">
+                <span className="font-mono font-semibold">{e.symbol}</span>
+                <span className="text-muted-foreground">{e.name}</span>
+                {e.session !== "UNKNOWN" && (
+                  <Badge variant="secondary">{sessionLabel(t, e.session)}</Badge>
+                )}
+                {e.isEstimate && <Badge variant="outline">{t("estimate")}</Badge>}
+                {e.epsForward !== null && (
+                  <span className="ml-auto text-xs text-muted-foreground">EPS {e.epsForward}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {sortedEntries.length === 0 ? (
         <div className="flex min-h-44 flex-col items-start justify-center px-4 py-6">
