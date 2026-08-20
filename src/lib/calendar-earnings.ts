@@ -2,6 +2,42 @@ const DAY_MS = 86_400_000;
 
 export type EarningsSession = "BMO" | "AMC" | "UNKNOWN";
 
+const US_EQUITY_EXCHANGES = new Set([
+  "nasdaqgs",
+  "nasdaqcm",
+  "nasdaqgm",
+  "ncm",
+  "ngm",
+  "nasdaq",
+  "nasdaq global select market",
+  "nasdaq capital market",
+  "nasdaq global market",
+  "nms",
+  "nyq",
+  "nyse",
+  "nysearca",
+  "new york stock exchange",
+  "nyse american",
+  "nyse arca",
+  "amex",
+  "american stock exchange",
+  "ase",
+  "pcx",
+  "arcx",
+  "bats",
+  "bts",
+  "bats global markets",
+  "cboe",
+  "cboe us",
+  "cboe bzx",
+  "cboe edgx",
+]);
+
+export function isUsEquityExchange(exchange: string): boolean {
+  const normalized = exchange.trim().toLowerCase();
+  return US_EQUITY_EXCHANGES.has(normalized);
+}
+
 /** Taiwan calendar day (UTC+8, no DST) — same as taiwanCalendarDay. */
 const TAIWAN_OFFSET_MS = 8 * 60 * 60 * 1000;
 
