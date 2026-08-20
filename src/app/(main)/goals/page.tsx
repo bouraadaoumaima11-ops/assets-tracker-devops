@@ -17,6 +17,12 @@ import {
   parseDateOnly,
 } from "@/lib/calendar-date";
 import { getCalendarEntriesInRange } from "@/lib/services/calendar-entry-service";
+import {
+  CALENDAR_EARNINGS_RATE_LIMIT,
+  getCalendarEarnings,
+  type CalendarEarningsItem,
+} from "@/lib/services/calendar-earnings-data";
+import { rateLimitSubjectCheckWithPrune } from "@/lib/rate-limit";
 import type { SerializedAccount } from "@/lib/types";
 
 const CLIENT_NAMESPACES = [
@@ -42,6 +48,11 @@ async function GoalsContent({ searchParams }: GoalsPageProps) {
   const userId = session.user.id;
   const { month, date } = normalizeCalendarUrlState(await searchParams);
   const { from, to } = getVisibleCalendarRange(month);
+  const earningsLimited = rateLimitSubjectCheckWithPrune(
+    userId,
+    "yahoo",
+    CALENDAR_EARNINGS_RATE_LIMIT,
+  );
 
   const settingsP = getOrCreateSettings(userId);
   const [
@@ -55,6 +66,7 @@ async function GoalsContent({ searchParams }: GoalsPageProps) {
     settings,
     stocks,
     calendarEntries,
+    calendarEarnings,
   ] = await Promise.all([
     getTranslations("goals"),
     getTranslations("nav"),
@@ -66,9 +78,18 @@ async function GoalsContent({ searchParams }: GoalsPageProps) {
     settingsP,
     getCachedTrackedStocks(userId),
     getCalendarEntriesInRange(userId, parseDateOnly(from)!, parseDateOnly(to)!),
+    earningsLimited
+      ? Promise.resolve<CalendarEarningsItem[]>([])
+      : getCalendarEarnings(userId, from, to),
   ]);
 
   const accounts: SerializedAccount[] = rawAccounts.map(({ holdings: _h, ...rest }) => rest);
+  const earningsByDate = new Map<string, CalendarEarningsItem[]>();
+  for (const item of calendarEarnings) {
+    const day = earningsByDate.get(item.date) ?? [];
+    day.push(item);
+    earningsByDate.set(item.date, day);
+  }
   const calendarToday = formatDateOnly(taiwanCalendarDay(new Date()));
 
   return (
@@ -85,6 +106,7 @@ async function GoalsContent({ searchParams }: GoalsPageProps) {
           projectionData={projectionData}
           stocks={stocks}
           calendarEntries={calendarEntries}
+          earningsByDate={earningsByDate}
           calendarMonth={month}
           calendarSelectedDate={date}
           calendarToday={calendarToday}
