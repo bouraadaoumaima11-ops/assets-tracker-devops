@@ -33,7 +33,7 @@ async function queryCalendarEntriesInRange(userId: string, fromDate: Date, toDat
   return entries.map(serializeCalendarEntry);
 }
 
-export async function getFreshCalendarEntriesInRange(
+export async function getCalendarEntriesInRange(
   userId: string,
   fromDate: Date,
   toDate: Date,
@@ -41,7 +41,7 @@ export async function getFreshCalendarEntriesInRange(
   return queryCalendarEntriesInRange(userId, fromDate, toDate);
 }
 
-export async function getCalendarEntriesInRange(
+export async function getCalendarEntriesInRangeCached(
   userId: string,
   fromDate: Date,
   toDate: Date,
