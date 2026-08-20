@@ -52,7 +52,7 @@ function DrawerContent({
         <DrawerPrimitive.Popup
           data-slot="drawer-content"
           className={cn(
-            "flex flex-col pointer-events-auto",
+            "relative flex flex-col pointer-events-auto",
             "max-h-[90dvh] w-full",
             "rounded-t-2xl bg-popover text-sm text-popover-foreground ring-1 ring-foreground/10",
             "outline-none",
@@ -76,7 +76,14 @@ function DrawerContent({
           {showCloseButton && (
             <DrawerPrimitive.Close
               data-slot="drawer-close"
-              render={<Button variant="ghost" className="absolute top-1 right-2" size="icon-sm" />}
+              render={
+                <Button
+                  variant="ghost"
+                  className="absolute top-1 right-2"
+                  size="icon-sm"
+                  mobileTouch
+                />
+              }
             >
               <XIcon />
               <span className="sr-only">Close</span>

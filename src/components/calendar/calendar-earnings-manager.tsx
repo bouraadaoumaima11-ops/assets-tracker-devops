@@ -231,11 +231,11 @@ export function CalendarEarningsManager({ open, onOpenChange }: CalendarEarnings
   if (isMobile) {
     return (
       <Drawer open={open} onOpenChange={onOpenChange}>
-        <DrawerContent showCloseButton={false} className="max-h-[90dvh]">
+        <DrawerContent className="max-h-[90dvh]">
           <DrawerHeader>
             <DrawerTitle>{title}</DrawerTitle>
           </DrawerHeader>
-          <div className="px-4 pb-4">{content}</div>
+          <div className="max-h-[calc(90dvh-5rem)] overflow-y-auto px-4 pb-4">{content}</div>
         </DrawerContent>
       </Drawer>
     );
@@ -243,7 +243,7 @@ export function CalendarEarningsManager({ open, onOpenChange }: CalendarEarnings
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
