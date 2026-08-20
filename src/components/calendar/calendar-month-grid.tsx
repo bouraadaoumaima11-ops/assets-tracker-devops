@@ -41,6 +41,7 @@ export function CalendarMonthGrid({
   const days = useMemo(() => buildMonthGrid(month), [month]);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocusDate = useRef<string | null>(null);
+  const initialMobileReveal = useRef(false);
   const weekdayFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }),
     [locale],
@@ -90,6 +91,18 @@ export function CalendarMonthGrid({
     return () => cancelAnimationFrame(frame);
   }, [month, selectedDate]);
 
+  useEffect(() => {
+    if (initialMobileReveal.current || !window.matchMedia("(max-width: 767px)").matches) return;
+
+    const frame = requestAnimationFrame(() => {
+      const button = buttonRefs.current.get(selectedDate);
+      if (!button) return;
+      button.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+      initialMobileReveal.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedDate]);
+
   function selectAndFocus(date: string, source: "pointer" | "keyboard") {
     pendingFocusDate.current = isCalendarFocusDestinationReady({
       pendingDate: date,
@@ -136,7 +149,7 @@ export function CalendarMonthGrid({
         </h2>
         <ul
           aria-label={t("categoryLegend")}
-          className="flex max-w-full gap-1.5 overflow-x-auto pb-1 lg:flex-wrap lg:justify-end lg:overflow-visible lg:pb-0"
+          className="flex min-w-0 max-w-full gap-1.5 overflow-x-auto overscroll-x-contain pb-1 scrollbar-none lg:flex-wrap lg:justify-end lg:overflow-visible lg:pb-0"
         >
           {CALENDAR_ENTRY_CATEGORIES.map((category) => (
             <li key={category} className="shrink-0">
@@ -181,6 +194,20 @@ export function CalendarMonthGrid({
                 const countLabel = t("entryCount", { count: entries.length });
                 const earningsHint =
                   dayEarnings.length > 0 ? t("earningsBadge", { count: dayEarnings.length }) : null;
+                const earningsTooltip =
+                  dayEarnings.length > 0
+                    ? `${earningsHint}: ${dayEarnings
+                        .map((item) => {
+                          const session =
+                            item.session === "BMO"
+                              ? t("beforeOpen")
+                              : item.session === "AMC"
+                                ? t("afterClose")
+                                : t("earnings");
+                          return `${item.symbol} (${session})`;
+                        })
+                        .join(", ")}`
+                    : undefined;
                 const categorySummary =
                   categoryCounts.length > 0
                     ? t("categorySummary", {
@@ -214,13 +241,14 @@ export function CalendarMonthGrid({
                       type="button"
                       tabIndex={isSelected ? 0 : -1}
                       aria-current={isToday ? "date" : undefined}
+                      title={earningsTooltip}
                       aria-label={[fullDate, countLabel, categorySummary, earningsHint]
                         .filter(Boolean)
                         .join(", ")}
                       onClick={() => selectAndFocus(date, "pointer")}
                       onKeyDown={(event) => handleKeyDown(event, date, index)}
                       className={cn(
-                        "flex min-h-16 w-full flex-col items-center gap-1 px-1.5 py-2 text-center outline-none motion-fast sm:min-h-20 sm:items-start sm:text-left",
+                        "flex min-h-16 w-full scroll-mb-24 flex-col items-center gap-1 px-1.5 py-2 text-center outline-none motion-fast sm:min-h-20 sm:items-start sm:text-left",
                         "transition-colors duration-150 ease-[var(--ease-micro)]",
                         "motion-reduce:transition-none",
                         "hover:bg-foreground/8",

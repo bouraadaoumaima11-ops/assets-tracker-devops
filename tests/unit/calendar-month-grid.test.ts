@@ -12,6 +12,8 @@ vi.mock("next-intl", () => ({
     const dict: Record<string, string> = {
       earnings: "Earnings",
       earningsBadge: "Earnings on {count} stock(s)",
+      beforeOpen: "Before open",
+      afterClose: "After close",
       entryCount: "{count} entries",
       categorySummary: "Categories: {categories}",
       categoryCount: "{category}: {count}",
@@ -71,6 +73,7 @@ describe("CalendarMonthGrid earnings badge", () => {
     const html = renderGrid(new Map([["2026-08-12", [earningsItem("2026-08-12", "AAPL")]]]));
 
     expect(html).toContain('aria-label="Earnings on 1 stock(s)"');
+    expect(html).toContain('title="Earnings on 1 stock(s): AAPL (Before open)"');
     expect(html).toContain(">Earnings</span>");
   });
 

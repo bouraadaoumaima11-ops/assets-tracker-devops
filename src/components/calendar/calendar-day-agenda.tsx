@@ -105,15 +105,23 @@ export function CalendarDayAgenda({
           <h3 className="text-xs font-semibold text-chart-5">{t("earnings")}</h3>
           <ul className="mt-2 space-y-2">
             {earnings.map((e) => (
-              <li key={e.symbol} className="flex items-center gap-2 text-sm">
-                <span className="font-mono font-semibold">{e.symbol}</span>
-                <span className="text-muted-foreground">{e.name}</span>
+              <li key={e.symbol} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                <span className="shrink-0 font-mono font-semibold">{e.symbol}</span>
+                <span className="min-w-0 flex-1 break-words text-muted-foreground">{e.name}</span>
                 {e.session !== "UNKNOWN" && (
-                  <Badge variant="secondary">{sessionLabel(t, e.session)}</Badge>
+                  <Badge className="shrink-0" variant="secondary">
+                    {sessionLabel(t, e.session)}
+                  </Badge>
                 )}
-                {e.isEstimate && <Badge variant="outline">{t("estimate")}</Badge>}
+                {e.isEstimate && (
+                  <Badge className="shrink-0" variant="outline">
+                    {t("estimate")}
+                  </Badge>
+                )}
                 {e.epsForward !== null && (
-                  <span className="ml-auto text-xs text-muted-foreground">EPS {e.epsForward}</span>
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                    EPS {e.epsForward}
+                  </span>
                 )}
               </li>
             ))}
