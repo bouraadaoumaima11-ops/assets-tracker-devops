@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
 import { useTranslations } from "next-intl";
+import { CalendarIcon } from "lucide-react";
 
 import { CalendarCategoryBadge } from "@/components/calendar/calendar-category-badge";
 import {
@@ -33,7 +34,7 @@ export function CalendarMonthGrid({
   entriesByDate,
   locale,
   onSelectDate,
-  earningsByDate: _earningsByDate,
+  earningsByDate,
 }: CalendarMonthGridProps) {
   const t = useTranslations("calendar");
   const headingId = useId();
@@ -168,6 +169,7 @@ export function CalendarMonthGrid({
               {days.slice(weekIndex * 7, weekIndex * 7 + 7).map((date, dayIndex) => {
                 const index = weekIndex * 7 + dayIndex;
                 const entries = entriesByDate.get(date) ?? [];
+                const dayEarnings = earningsByDate?.get(date) ?? [];
                 const categoryCounts = summarizeCalendarEntryCategories(entries);
                 const categories = [...new Set(entries.map((entry) => entry.category))];
                 const shownCategories = categories.slice(0, 3);
@@ -177,6 +179,8 @@ export function CalendarMonthGrid({
                 const isCurrentMonth = date.startsWith(month);
                 const fullDate = dateFormatter.format(new Date(`${date}T00:00:00.000Z`));
                 const countLabel = t("entryCount", { count: entries.length });
+                const earningsHint =
+                  dayEarnings.length > 0 ? t("earningsBadge", { count: dayEarnings.length }) : null;
                 const categorySummary =
                   categoryCounts.length > 0
                     ? t("categorySummary", {
@@ -210,7 +214,7 @@ export function CalendarMonthGrid({
                       type="button"
                       tabIndex={isSelected ? 0 : -1}
                       aria-current={isToday ? "date" : undefined}
-                      aria-label={[fullDate, countLabel, categorySummary]
+                      aria-label={[fullDate, countLabel, categorySummary, earningsHint]
                         .filter(Boolean)
                         .join(", ")}
                       onClick={() => selectAndFocus(date, "pointer")}
@@ -256,6 +260,16 @@ export function CalendarMonthGrid({
                               +{remainingCategories}
                             </span>
                           )}
+                        </span>
+                      )}
+
+                      {dayEarnings.length > 0 && (
+                        <span
+                          aria-label={t("earningsBadge", { count: dayEarnings.length })}
+                          className="mt-auto inline-flex items-center gap-1 rounded-full bg-chart-5/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-5"
+                        >
+                          <CalendarIcon className="size-2.5" />
+                          {dayEarnings.length > 1 ? dayEarnings.length : t("earnings")}
                         </span>
                       )}
                     </button>
