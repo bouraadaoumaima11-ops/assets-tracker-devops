@@ -12,7 +12,7 @@ import {
 } from "@/lib/calendar-date";
 import { getSession } from "@/lib/auth-session";
 import { pickMessages } from "@/lib/i18n-utils";
-import { getCalendarEntriesInRange } from "@/lib/services/calendar-entry-service";
+import { getCalendarEntriesInRangeCached } from "@/lib/services/calendar-entry-service";
 
 const CLIENT_NAMESPACES = ["calendar", "common", "nav"];
 
@@ -29,7 +29,7 @@ async function CalendarContent({ searchParams }: CalendarPageProps) {
   const [messages, locale, entries] = await Promise.all([
     getMessages(),
     getLocale(),
-    getCalendarEntriesInRange(session.user.id, parseDateOnly(from)!, parseDateOnly(to)!),
+    getCalendarEntriesInRangeCached(session.user.id, parseDateOnly(from)!, parseDateOnly(to)!),
   ]);
   const today = formatDateOnly(taiwanCalendarDay(new Date()));
 
