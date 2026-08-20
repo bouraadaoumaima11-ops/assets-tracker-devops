@@ -1,5 +1,6 @@
 import "server-only";
 import { cacheTag, cacheLife } from "next/cache";
+import { log } from "@/lib/logger";
 import { getYahooClient } from "@/lib/services/yahoo-client";
 import { getCalendarEarningsWatch } from "@/lib/services/calendar-earnings-service";
 import {
@@ -17,6 +18,8 @@ export type CalendarEarningsItem = {
   epsForward: number | null;
 };
 
+const FETCH_TIMEOUT_MS = 5_000;
+
 export async function getCalendarEarnings(
   userId: string,
   from: string,
@@ -31,7 +34,18 @@ export async function getCalendarEarnings(
   if (symbols.length === 0) return [];
 
   const yahooFinance = await getYahooClient();
-  const quotes = await yahooFinance.quote(symbols);
+  let quotes;
+  try {
+    quotes = await Promise.race([
+      yahooFinance.quote(symbols),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Yahoo Finance request timed out")), FETCH_TIMEOUT_MS),
+      ),
+    ]);
+  } catch (error) {
+    log.error("calendar.earnings.yahoo_failed", { error: String(error) });
+    return [];
+  }
   const list = Array.isArray(quotes) ? quotes : [quotes];
 
   const items: CalendarEarningsItem[] = [];

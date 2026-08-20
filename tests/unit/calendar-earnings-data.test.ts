@@ -54,4 +54,10 @@ describe("getCalendarEarnings", () => {
     const result = await getCalendarEarnings("u", "2026-08-01", "2026-08-31");
     expect(result).toEqual([]);
   });
+
+  it("returns empty when Yahoo quotes fail", async () => {
+    h.quote.mockRejectedValue(new Error("Yahoo unavailable"));
+    const result = await getCalendarEarnings("u", "2026-08-01", "2026-08-31");
+    expect(result).toEqual([]);
+  });
 });
