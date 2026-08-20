@@ -9,6 +9,7 @@ import {
   summarizeCalendarEntryCategories,
 } from "@/components/calendar/calendar-view-model";
 import { addCalendarDays, buildMonthGrid, moveCalendarMonth } from "@/lib/calendar-date";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import { cn } from "@/lib/utils";
 import { CALENDAR_ENTRY_CATEGORIES, type SerializedCalendarEntry } from "@/lib/types";
 
@@ -19,6 +20,7 @@ type CalendarMonthGridProps = {
   entriesByDate: ReadonlyMap<string, readonly SerializedCalendarEntry[]>;
   locale: string;
   onSelectDate: (date: string, source: "pointer" | "keyboard") => void;
+  earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>;
 };
 
 const MONDAY_UTC = Date.UTC(1970, 0, 5);
@@ -31,6 +33,7 @@ export function CalendarMonthGrid({
   entriesByDate,
   locale,
   onSelectDate,
+  earningsByDate: _earningsByDate,
 }: CalendarMonthGridProps) {
   const t = useTranslations("calendar");
   const headingId = useId();

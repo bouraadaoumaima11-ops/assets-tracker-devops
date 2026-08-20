@@ -21,11 +21,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedCalendarEntry } from "@/lib/types";
 
 type CalendarDayAgendaProps = {
   date: string;
   entries: readonly SerializedCalendarEntry[];
+  earnings?: readonly CalendarEarningsItem[];
   locale: string;
   onAdd: () => void;
   onEdit: (entry: SerializedCalendarEntry) => void;
@@ -35,6 +37,7 @@ type CalendarDayAgendaProps = {
 export function CalendarDayAgenda({
   date,
   entries,
+  earnings: _earnings,
   locale,
   onAdd,
   onEdit,

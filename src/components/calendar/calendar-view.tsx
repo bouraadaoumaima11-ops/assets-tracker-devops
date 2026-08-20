@@ -13,6 +13,7 @@ import { groupCalendarEntriesByDate } from "@/components/calendar/calendar-view-
 import { LargeTitleHeading } from "@/components/layout/large-title-heading";
 import { Button } from "@/components/ui/button";
 import { moveCalendarMonth } from "@/lib/calendar-date";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedCalendarEntry } from "@/lib/types";
 
 type CalendarViewProps = {
@@ -22,6 +23,7 @@ type CalendarViewProps = {
   today: string;
   locale: string;
   showHeader?: boolean;
+  earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>;
 };
 
 export function CalendarView({
@@ -30,6 +32,7 @@ export function CalendarView({
   today,
   locale,
   showHeader = true,
+  earningsByDate,
 }: CalendarViewProps) {
   const t = useTranslations("calendar");
   const router = useRouter();
@@ -138,11 +141,13 @@ export function CalendarView({
           entriesByDate={entriesByDate}
           locale={locale}
           onSelectDate={selectDate}
+          earningsByDate={earningsByDate}
         />
         <div ref={agendaRef} className="mt-4 scroll-mt-4 md:sticky md:top-4 md:mt-0">
           <CalendarDayAgenda
             date={effectiveDate}
             entries={entriesByDate.get(effectiveDate) ?? []}
+            earnings={earningsByDate?.get(effectiveDate) ?? []}
             locale={locale}
             onAdd={addEntry}
             onEdit={editEntry}
