@@ -5,7 +5,7 @@ import { log } from "@/lib/logger";
 import { parseDateOnly } from "@/lib/calendar-date";
 import { calendarEntriesRangeSchema, createCalendarEntrySchema } from "@/lib/validators";
 import {
-  getFreshCalendarEntriesInRange,
+  getCalendarEntriesInRange,
   invalidateCalendarEntryCaches,
 } from "@/lib/services/calendar-entry-service";
 import { serializeCalendarEntry } from "@/lib/types";
@@ -29,7 +29,7 @@ export const GET = withAuth(
 
       const from = parseDateOnly(parsed.data.from)!;
       const to = parseDateOnly(parsed.data.to)!;
-      return ok(await getFreshCalendarEntriesInRange(userId, from, to));
+      return ok(await getCalendarEntriesInRange(userId, from, to));
     } catch (error) {
       log.error("calendar_entries.list_failed", calendarErrorMetadata(error, principal));
       return failure("Failed to load calendar entries", 500);
