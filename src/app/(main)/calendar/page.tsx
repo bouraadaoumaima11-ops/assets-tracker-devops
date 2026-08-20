@@ -29,7 +29,11 @@ async function CalendarContent({ searchParams }: CalendarPageProps) {
   const [messages, locale, entries] = await Promise.all([
     getMessages(),
     getLocale(),
-    getCalendarEntriesInRangeCached(session.user.id, parseDateOnly(from)!, parseDateOnly(to)!),
+    getCalendarEntriesInRangeCached(
+      session.user.id,
+      parseDateOnly(from)!,
+      parseDateOnly(to)!,
+    ),
   ]);
   const today = formatDateOnly(taiwanCalendarDay(new Date()));
 
