@@ -20,7 +20,13 @@ export type CalendarEarningsItem = {
 
 const FETCH_TIMEOUT_MS = 5_000;
 
-export async function getCalendarEarnings(
+export const CALENDAR_EARNINGS_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 60_000,
+  prefix: "calendar-earnings",
+} as const;
+
+async function getCachedCalendarEarnings(
   userId: string,
   from: string,
   to: string,
@@ -34,18 +40,12 @@ export async function getCalendarEarnings(
   if (symbols.length === 0) return [];
 
   const yahooFinance = await getYahooClient();
-  let quotes;
-  try {
-    quotes = await Promise.race([
-      yahooFinance.quote(symbols),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Yahoo Finance request timed out")), FETCH_TIMEOUT_MS),
-      ),
-    ]);
-  } catch (error) {
-    log.error("calendar.earnings.yahoo_failed", { error: String(error) });
-    return [];
-  }
+  const quotes = await Promise.race([
+    yahooFinance.quote(symbols),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("Yahoo Finance request timed out")), FETCH_TIMEOUT_MS),
+    ),
+  ]);
   const list = Array.isArray(quotes) ? quotes : [quotes];
 
   const items: CalendarEarningsItem[] = [];
@@ -53,9 +53,11 @@ export async function getCalendarEarnings(
     if (!q?.symbol) continue;
     const name = watch.find((w) => w.symbol === q.symbol)?.name ?? q.symbol;
     const callStart = q.earningsCallTimestampStart;
+    const earningsTimestamp = q.earningsTimestamp;
+    if (!callStart && !earningsTimestamp) continue;
     const mapped = callStart
       ? mapEarningsCallToTaiwanDay(callStart)
-      : mapEarningsTimestampToTaiwanDay(q.earningsTimestamp ?? new Date(0));
+      : mapEarningsTimestampToTaiwanDay(earningsTimestamp);
     if (mapped.date < from || mapped.date > to) continue;
     items.push({
       date: mapped.date,
@@ -67,4 +69,17 @@ export async function getCalendarEarnings(
     });
   }
   return items;
+}
+
+export async function getCalendarEarnings(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<CalendarEarningsItem[]> {
+  try {
+    return await getCachedCalendarEarnings(userId, from, to);
+  } catch (error) {
+    log.error("calendar.earnings.yahoo_failed", { error: String(error) });
+    return [];
+  }
 }
