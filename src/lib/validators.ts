@@ -414,6 +414,17 @@ export const calendarEntryInputSchema = calendarEntryFields.superRefine(enforceC
 export const createCalendarEntrySchema = calendarEntryInputSchema;
 export const updateCalendarEntrySchema = calendarEntryFields.partial();
 
+export const createCalendarEarningsWatchSchema = z.object({
+  symbol: z
+    .string()
+    .trim()
+    .min(1)
+    .max(16)
+    .transform((s) => s.toUpperCase()),
+  name: z.string().trim().min(1).max(200),
+  source: z.enum(["tracked", "manual"]).default("tracked"),
+});
+
 const decimalStringSchema = z.string().regex(/^-?\d+(\.\d+)?$/, "Must be a decimal number");
 const decimalSchema = z.union([decimalStringSchema, z.number().finite()]);
 

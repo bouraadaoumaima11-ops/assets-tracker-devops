@@ -84,6 +84,22 @@
       "timeInvalid": "Choose a valid time",
       "categoryInvalid": "Choose a category",
       "sourceInvalid": "Use a valid http or https URL"
+    },
+    "earningsWatch": {
+      "manage": "Manage earnings watch",
+      "title": "Earnings watch",
+      "watchList": "Watched stocks",
+      "empty": "No stocks watched yet",
+      "addManual": "Add by search",
+      "searchLabel": "Search stocks",
+      "searchPlaceholder": "Search by symbol or name…",
+      "trackedStocks": "Tracked stocks",
+      "trackedEmpty": "No tracked stocks",
+      "manual": "Manual",
+      "tracked": "Tracked",
+      "remove": "Remove {symbol}",
+      "loadFailed": "Could not load earnings watch",
+      "mutationFailed": "Could not update earnings watch"
     }
   },
   "commandPalette": {
