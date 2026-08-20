@@ -23,10 +23,12 @@
 ### Task 1: Add `CalendarEarningsWatch` Prisma model + migration
 
 **Files:**
+
 - Modify: `prisma/schema.prisma`
 - Create: migration under `prisma/migrations/`
 
 **Interfaces:**
+
 - Produces: Prisma model `CalendarEarningsWatch` with fields `id, userId, user, symbol, name, source, createdAt`, `@@unique([userId, symbol])`, `@@index([userId])`.
 
 - [ ] **Step 1: Add the model to schema.prisma**
@@ -78,10 +80,12 @@ git commit -m "feat(calendar): add earnings watch model"
 ### Task 2: Taiwan-day earnings mapping util
 
 **Files:**
+
 - Create: `src/lib/calendar-earnings.ts`
 - Test: `tests/unit/calendar-earnings.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces:
   - `export type EarningsSession = "BMO" | "AMC" | "UNKNOWN";`
@@ -89,6 +93,7 @@ git commit -m "feat(calendar): add earnings watch model"
   - `export function deriveSessionFromCallTime(callStart: Date): EarningsSession` — BMO if the call is before ~12:00 ET, else AMC.
 
 **Logic (from spec):**
+
 - Session derived from `earningsCallTimestampStart` ET hour: < 12:00 ET → BMO; else AMC. Missing → UNKNOWN.
 - BMO → same Taiwan day as the ET date. AMC → Taiwan **next** day. UNKNOWN → Taiwan day of the ET date (conservative).
 
@@ -97,7 +102,10 @@ git commit -m "feat(calendar): add earnings watch model"
 ```ts
 // tests/unit/calendar-earnings.test.ts
 import { describe, expect, it } from "vitest";
-import { deriveSessionFromCallTime, mapEarningsTimestampToTaiwanDay } from "@/lib/calendar-earnings";
+import {
+  deriveSessionFromCallTime,
+  mapEarningsTimestampToTaiwanDay,
+} from "@/lib/calendar-earnings";
 
 describe("mapEarningsTimestampToTaiwanDay", () => {
   it("maps a BMO call to the same Taiwan day", () => {
@@ -239,10 +247,12 @@ git commit -m "feat(calendar): map earnings calls to Taiwan calendar days"
 ### Task 3: Earnings watch CRUD service
 
 **Files:**
+
 - Create: `src/lib/services/calendar-earnings-service.ts`
 - Test: `tests/unit/calendar-earnings-service.test.ts`
 
 **Interfaces:**
+
 - Consumes: Prisma `CalendarEarningsWatch`.
 - Produces:
   - `export type SerializedCalendarEarningsWatch = { id: string; symbol: string; name: string; source: "tracked" | "manual"; }`
@@ -316,7 +326,12 @@ describe("calendar earnings watch", () => {
     expect(mock.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId_symbol: { userId: "u", symbol: "AAPL" } },
-        create: expect.objectContaining({ userId: "u", symbol: "AAPL", name: "Apple", source: "manual" }),
+        create: expect.objectContaining({
+          userId: "u",
+          symbol: "AAPL",
+          name: "Apple",
+          source: "manual",
+        }),
         update: expect.objectContaining({ name: "Apple" }),
       }),
     );
@@ -429,16 +444,19 @@ git commit -m "feat(calendar): add earnings watch CRUD service"
 ### Task 4: `getCalendarEarnings` service (quote fetch + filter + map)
 
 **Files:**
+
 - Create: `src/lib/services/calendar-earnings-data.ts`
 - Test: `tests/unit/calendar-earnings-data.test.ts`
 
 **Interfaces:**
+
 - Consumes: `getYahooClient` from `@/lib/services/yahoo-client`, `mapEarningsCallToTaiwanDay` / `mapEarningsTimestampToTaiwanDay` from `@/lib/calendar-earnings`, `getCalendarEarningsWatch` from Task 3.
 - Produces:
   - `export type CalendarEarningsItem = { date: string; symbol: string; name: string; session: "BMO" | "AMC" | "UNKNOWN"; isEstimate: boolean; epsForward: number | null; }`
   - `export async function getCalendarEarnings(userId: string, from: string, to: string): Promise<CalendarEarningsItem[]>`
 
 **Logic:**
+
 - Read watch symbols via `getCalendarEarningsWatch(userId)`.
 - Call `yahooFinance.quote(symbols)`.
 - For each quote: prefer `earningsCallTimestampStart`; fall back to `earningsTimestamp`.
@@ -452,7 +470,10 @@ Mock `getYahooClient` to return a stub client with `quote()`. Test filtering and
 ```ts
 // tests/unit/calendar-earnings-data.test.ts
 import { describe, expect, it, vi } from "vitest";
-import { getCalendarEarnings, type CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
+import {
+  getCalendarEarnings,
+  type CalendarEarningsItem,
+} from "@/lib/services/calendar-earnings-data";
 
 const quoteStub = vi.fn();
 vi.mock("@/lib/services/yahoo-client", () => ({
@@ -581,10 +602,12 @@ git commit -m "feat(calendar): fetch and map earnings data for the calendar"
 ### Task 5: Calendar page wiring (pass earnings overlay to view)
 
 **Files:**
+
 - Modify: `src/app/(main)/calendar/page.tsx`
 - Modify: `src/components/calendar/calendar-view.tsx`
 
 **Interfaces:**
+
 - Consumes: `getCalendarEarnings` from Task 4.
 - Produces:
   - `CalendarView` gains a `earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>` prop (default `undefined` → no overlay).
@@ -595,7 +618,10 @@ git commit -m "feat(calendar): fetch and map earnings data for the calendar"
 In `src/app/(main)/calendar/page.tsx`, add earnings fetching to the existing `Promise.all`:
 
 ```tsx
-import { getCalendarEarnings, type CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
+import {
+  getCalendarEarnings,
+  type CalendarEarningsItem,
+} from "@/lib/services/calendar-earnings-data";
 
 // inside the existing Promise.all
 const [messages, locale, entries, earnings] = await Promise.all([
@@ -629,7 +655,7 @@ type CalendarViewProps = {
   earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>;
 };
 
-export function CalendarView({ /* ... */ earningsByDate, }: CalendarViewProps) {
+export function CalendarView({ /* ... */ earningsByDate }: CalendarViewProps) {
   // pass to children
 }
 ```
@@ -653,11 +679,13 @@ git commit -m "feat(calendar): pass earnings overlay into the calendar view"
 ### Task 6: Earnings badge on month grid cells
 
 **Files:**
+
 - Modify: `src/components/calendar/calendar-month-grid.tsx`
 - Modify: `src/components/calendar/calendar-view-model.ts` (optional helper)
 - Test: `tests/unit/calendar-month-grid.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>` prop on `CalendarMonthGrid`.
 - Produces: a `財報` badge rendered on cells that have earnings, visually distinct from `CalendarCategoryBadge`.
 
@@ -672,15 +700,17 @@ type CalendarMonthGridProps = {
 };
 
 // inside the day-cell button, near the existing entries badge:
-{dayEarnings.length > 0 && (
-  <span
-    aria-label={t("earningsBadge", { count: dayEarnings.length })}
-    className="mt-auto inline-flex items-center gap-1 rounded-full bg-chart-5/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-5"
-  >
-    <CalendarIcon className="size-2.5" />
-    {dayEarnings.length > 1 ? dayEarnings.length : t("earnings")}
-  </span>
-)}
+{
+  dayEarnings.length > 0 && (
+    <span
+      aria-label={t("earningsBadge", { count: dayEarnings.length })}
+      className="mt-auto inline-flex items-center gap-1 rounded-full bg-chart-5/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-5"
+    >
+      <CalendarIcon className="size-2.5" />
+      {dayEarnings.length > 1 ? dayEarnings.length : t("earnings")}
+    </span>
+  );
+}
 ```
 
 Where `dayEarnings = earningsByDate?.get(date) ?? []`.
@@ -688,6 +718,7 @@ Where `dayEarnings = earningsByDate?.get(date) ?? []`.
 - [ ] **Step 2: Add the i18n keys**
 
 In `messages/en-US.json` and `messages/zh-TW.json` under `calendar`:
+
 - `earnings`: `"Earnings"` / `"財報"`
 - `earningsBadge`: `"Earnings on {count} stock(s)"` / `"{count} 檔財報"`
 
@@ -712,10 +743,12 @@ git commit -m "feat(calendar): show earnings badge on day cells"
 ### Task 7: Read-only earnings section in day agenda
 
 **Files:**
+
 - Modify: `src/components/calendar/calendar-day-agenda.tsx`
 - Test: `tests/unit/calendar-day-agenda.test.tsx`
 
 **Interfaces:**
+
 - Consumes: `earnings?: readonly CalendarEarningsItem[]` prop on `CalendarDayAgenda`.
 - Produces: a read-only "Earnings" section rendered above/below the user entries, showing `symbol · session · EPS estimate`, not editable.
 
@@ -733,24 +766,26 @@ type CalendarDayAgendaProps = {
 Render a distinct read-only block when `earnings.length > 0`:
 
 ```tsx
-{earnings && earnings.length > 0 && (
-  <section aria-label={t("earningsSection")} className="border-b px-4 py-3">
-    <h3 className="text-xs font-semibold text-chart-5">{t("earnings")}</h3>
-    <ul className="mt-2 space-y-2">
-      {earnings.map((e) => (
-        <li key={e.symbol} className="flex items-center gap-2 text-sm">
-          <span className="font-mono font-semibold">{e.symbol}</span>
-          <span className="text-muted-foreground">{e.name}</span>
-          <Badge variant="secondary">{sessionLabel(e.session)}</Badge>
-          {e.isEstimate && <Badge variant="outline">{t("estimate")}</Badge>}
-          {e.epsForward !== null && (
-            <span className="ml-auto text-xs text-muted-foreground">EPS {e.epsForward}</span>
-          )}
-        </li>
-      ))}
-    </ul>
-  </section>
-)}
+{
+  earnings && earnings.length > 0 && (
+    <section aria-label={t("earningsSection")} className="border-b px-4 py-3">
+      <h3 className="text-xs font-semibold text-chart-5">{t("earnings")}</h3>
+      <ul className="mt-2 space-y-2">
+        {earnings.map((e) => (
+          <li key={e.symbol} className="flex items-center gap-2 text-sm">
+            <span className="font-mono font-semibold">{e.symbol}</span>
+            <span className="text-muted-foreground">{e.name}</span>
+            <Badge variant="secondary">{sessionLabel(e.session)}</Badge>
+            {e.isEstimate && <Badge variant="outline">{t("estimate")}</Badge>}
+            {e.epsForward !== null && (
+              <span className="ml-auto text-xs text-muted-foreground">EPS {e.epsForward}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 ```
 
 Where `sessionLabel` maps `BMO → t("beforeOpen")`, `AMC → t("afterClose")`, `UNKNOWN → ""`.
@@ -758,6 +793,7 @@ Where `sessionLabel` maps `BMO → t("beforeOpen")`, `AMC → t("afterClose")`, 
 - [ ] **Step 2: Add i18n keys**
 
 In both message files under `calendar`:
+
 - `earningsSection`, `beforeOpen` (`"Before open"` / `"盤前"`), `afterClose` (`"After close"` / `"盤後"`), `estimate` (`"Estimate"` / `"估計"`).
 
 - [ ] **Step 3: Write a unit test**
@@ -781,11 +817,13 @@ git commit -m "feat(calendar): show read-only earnings section in day agenda"
 ### Task 8: Earnings watch management API + UI
 
 **Files:**
+
 - Create: `src/app/api/calendar-earnings-watch/route.ts`
 - Create: `src/components/calendar/calendar-earnings-manager.tsx`
 - Test: `tests/unit/calendar-earnings-watch-route.test.ts`
 
 **Interfaces:**
+
 - Consumes: CRUD service from Task 3, `HoldingSearch` (existing), `withAuth` from `@/lib/api-handler`.
 - Produces:
   - `GET /api/calendar-earnings-watch` → `{ data: SerializedCalendarEarningsWatch[] }`
@@ -809,27 +847,36 @@ import {
   invalidateCalendarEarningsCaches,
 } from "@/lib/services/calendar-earnings-service";
 
-export const GET = withAuth(async (_req, _ctx, userId) => {
-  return ok(await getCalendarEarningsWatch(userId));
-}, { demo: "allow" });
+export const GET = withAuth(
+  async (_req, _ctx, userId) => {
+    return ok(await getCalendarEarningsWatch(userId));
+  },
+  { demo: "allow" },
+);
 
-export const POST = withAuth(async (request, _ctx, userId, principal) => {
-  const body = await request.json();
-  const parsed = createCalendarEarningsWatchSchema.safeParse(body);
-  if (!parsed.success) return validationError(parsed.error);
-  const item = await addCalendarEarningsWatch(userId, parsed.data);
-  invalidateCalendarEarningsCaches(userId, principal);
-  return ok(item, { status: 201 });
-}, { demo: "allow" });
+export const POST = withAuth(
+  async (request, _ctx, userId, principal) => {
+    const body = await request.json();
+    const parsed = createCalendarEarningsWatchSchema.safeParse(body);
+    if (!parsed.success) return validationError(parsed.error);
+    const item = await addCalendarEarningsWatch(userId, parsed.data);
+    invalidateCalendarEarningsCaches(userId, principal);
+    return ok(item, { status: 201 });
+  },
+  { demo: "allow" },
+);
 
-export const DELETE = withAuth(async (request, _ctx, userId, principal) => {
-  const { searchParams } = new URL(request.url);
-  const symbol = searchParams.get("symbol")?.trim().toUpperCase();
-  if (!symbol) return failure("Symbol is required");
-  await removeCalendarEarningsWatch(userId, symbol);
-  invalidateCalendarEarningsCaches(userId, principal);
-  return ok(null, { status: 204 });
-}, { demo: "allow" });
+export const DELETE = withAuth(
+  async (request, _ctx, userId, principal) => {
+    const { searchParams } = new URL(request.url);
+    const symbol = searchParams.get("symbol")?.trim().toUpperCase();
+    if (!symbol) return failure("Symbol is required");
+    await removeCalendarEarningsWatch(userId, symbol);
+    invalidateCalendarEarningsCaches(userId, principal);
+    return ok(null, { status: 204 });
+  },
+  { demo: "allow" },
+);
 ```
 
 - [ ] **Step 2: Add the validator**
@@ -838,7 +885,12 @@ In `src/lib/validators.ts`, add:
 
 ```ts
 export const createCalendarEarningsWatchSchema = z.object({
-  symbol: z.string().trim().min(1).max(16).transform((s) => s.toUpperCase()),
+  symbol: z
+    .string()
+    .trim()
+    .min(1)
+    .max(16)
+    .transform((s) => s.toUpperCase()),
   name: z.string().trim().min(1).max(200),
   source: z.enum(["tracked", "manual"]).default("tracked"),
 });
@@ -847,6 +899,7 @@ export const createCalendarEarningsWatchSchema = z.object({
 - [ ] **Step 3: Write the manager UI**
 
 `src/components/calendar/calendar-earnings-manager.tsx` — a dialog with:
+
 - A list of tracked stocks (fetched via `/api/stocks`) with checkboxes toggling the watch.
 - A manual search input reusing `HoldingSearch` → on select, `POST` with `source: "manual"`.
 - A remove (x) button per watched item.
