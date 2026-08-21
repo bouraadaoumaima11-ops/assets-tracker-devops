@@ -17,7 +17,7 @@ import {
   getCalendarEarnings,
   type CalendarEarningsItem,
 } from "@/lib/services/calendar-earnings-data";
-import { getCalendarEntriesInRange } from "@/lib/services/calendar-entry-service";
+import { getCalendarEntriesInRangeCached } from "@/lib/services/calendar-entry-service";
 import { rateLimitSubjectCheckWithPrune } from "@/lib/rate-limit";
 
 const CLIENT_NAMESPACES = ["calendar", "common", "nav", "holdingSearch"];
@@ -40,7 +40,7 @@ async function CalendarContent({ searchParams }: CalendarPageProps) {
   const [messages, locale, entries, earnings] = await Promise.all([
     getMessages(),
     getLocale(),
-    getCalendarEntriesInRange(session.user.id, parseDateOnly(from)!, parseDateOnly(to)!),
+    getCalendarEntriesInRangeCached(session.user.id, parseDateOnly(from)!, parseDateOnly(to)!),
     earningsLimited
       ? Promise.resolve<CalendarEarningsItem[]>([])
       : getCalendarEarnings(session.user.id, from, to),

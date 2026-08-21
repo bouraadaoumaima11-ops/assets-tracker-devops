@@ -16,7 +16,7 @@ A private, multi-currency home for tracking your net worth, investments, cash, p
 
 > Formerly Assets Tracker. Same project, now branded as **astt**.
 
-[Live Demo](https://astt.app) · [Install with AI](#install-with-ai) · [Quick Start](#quick-start) · [Deployment](./docs/DEPLOYMENT.md) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
+[Live Demo](https://astt.app) · [Quick Start](#quick-start) · [Install with AI](#install-with-ai) · [Documentation](#documentation) · [Security](./SECURITY.md) · [Contributing](./CONTRIBUTING.md)
 
 ![astt dashboard on desktop and mobile](./public/readme-hero.jpg)
 
@@ -24,14 +24,10 @@ A private, multi-currency home for tracking your net worth, investments, cash, p
 
 - **Own your data** — run your own instance with PostgreSQL using Docker or deploy to Vercel and Neon.
 - **One financial view** — combine bank accounts, brokerages, crypto wallets, property, liabilities, and options.
-- **Multi-currency by design** — preserve original balances and normalize history into your preferred base currency.
+- **Multi-currency by design** — keep original balances and view history in your preferred base currency.
 - **Current market data** — refresh stocks, ETFs, crypto, options, and exchange rates through Yahoo Finance and CoinGecko.
 - **Planning and automation** — track recurring cash flow, recurring investments, daily snapshots, goals, and FIRE projections.
-- **Desktop and mobile** — responsive charts, keyboard navigation, themes, English/Traditional Chinese, and an installable PWA.
-
-Built with Next.js 16, React 19, Prisma 7, PostgreSQL, Tailwind CSS 4, and NextAuth.js 5.
-
-> astt v1 is stable for personal self-hosting. Review the [data responsibility](#data-responsibility) notice before serving other users.
+- **Desktop and mobile** — responsive UI, themes, English/Traditional Chinese, and an installable PWA.
 
 ## Demo
 
@@ -45,6 +41,29 @@ Built with Next.js 16, React 19, Prisma 7, PostgreSQL, Tailwind CSS 4, and NextA
     <td><img src="./public/readme-demo-mobile.png" alt="astt mobile dashboard"></td>
   </tr>
 </table>
+
+## Quick Start
+
+For production self-hosting with Docker Compose:
+
+```bash
+cp .env.example .env
+# Set the required production values in .env
+docker compose --profile full pull
+docker compose --profile full up --no-build -d
+```
+
+See [Deployment and Self-Hosting](./docs/DEPLOYMENT.md) for required environment variables, HTTPS, backups, upgrades, Vercel + Neon, and other production details.
+
+Developing astt locally? See the [Development workflow](./docs/DEVELOPMENT.md).
+
+## Install with AI
+
+Prefer to let an AI coding agent handle the setup? Paste this prompt into your agent:
+
+> Install astt by following the guide: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
+
+The guide covers both local development and production self-hosting.
 
 ## How It Compares
 
@@ -68,125 +87,24 @@ astt focuses on net worth and investments. If you mainly want double-entry bookk
 
 </details>
 
-## Install with AI
-
-Let's leave the installation to AI! Paste the prompt below into your AI agent and start exploring!
-
-> Install astt by following the guide: https://raw.githubusercontent.com/mike840609/assets_tracker/master/docs/INSTALL_WITH_AI.md
-
-Let an AI agent run the install for you — the guide covers both [local development](#quick-start) and [production self-hosting](#production-deployment).
-
-## Quick Start
-
-Prefer to run the commands yourself? For local development, follow the steps below. For production, see [Production Deployment](#production-deployment).
-
-### Prerequisites
-
-- Node.js 24
-- Docker with Docker Compose
-
-### 1. Configure the environment
-
-```bash
-cp .env.example .env
-```
-
-Replace the generated-placeholder values for `AUTH_SECRET`, `AUTH_SELF_HOST_PASSWORD`, and `CRON_SECRET`. The example database URLs are ready for the bundled local PostgreSQL container.
-
-The default self-host login is a single owner account protected by `AUTH_SELF_HOST_PASSWORD`. Google OAuth is optional — see [Deployment](./docs/DEPLOYMENT.md).
-
-### 2. Install and initialize
-
-```bash
-corepack enable
-pnpm install
-pnpm db:up
-pnpm exec prisma migrate deploy
-```
-
-### 3. Run the app
-
-```bash
-pnpm dev
-```
-
-Open [http://localhost:3000](http://localhost:3000). Stop the local database with `pnpm db:down`.
-
-To explore the app with sample data, sign in with the one-click **Preview Login** (local development only) and run `pnpm seed:demo`. See the [development workflow](./docs/DEVELOPMENT.md) for details.
-
-## Production Deployment
-
-### Docker Compose
-
-Set `NEXT_PUBLIC_APP_URL`, `POSTGRES_PASSWORD`, and the production secrets in `.env`, then pull the prebuilt application and migration images from GHCR and start the complete stack:
-
-```bash
-docker compose --profile full pull
-docker compose --profile full up --no-build -d
-```
-
-To build both images from source instead:
-
-```bash
-docker compose --profile full up --build -d
-```
-
-The one-shot migration service must finish successfully before the application starts. PostgreSQL data is stored in the `postgres_data` volume.
-
-### Vercel
-
-Vercel with a separate Neon production/preview database is the supported hosted path. See the [deployment guide](./docs/DEPLOYMENT.md) for environment variables, migrations, preview isolation, cron scheduling, health checks, and non-Vercel hosting.
-
-## Upgrading
-
-Docker deployments:
-
-```bash
-git pull
-docker compose --profile full pull
-docker compose --profile full up --no-build -d
-```
-
-Source deployments:
-
-```bash
-git pull
-pnpm install --frozen-lockfile
-pnpm exec prisma migrate deploy
-pnpm build
-```
-
-Always back up the database before an upgrade and review the [release notes](https://github.com/mike840609/assets_tracker/releases).
-
 ## Documentation
 
 - [Install with an AI agent](./docs/INSTALL_WITH_AI.md)
 - [Deployment and self-hosting](./docs/DEPLOYMENT.md)
 - [Development workflow](./docs/DEVELOPMENT.md)
-- [CI policy](./docs/CI.md)
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Database and migrations](./docs/DATABASE.md)
+- [CI policy](./docs/CI.md)
 - [Versioning](./docs/VERSIONING.md)
 - [Environment variable reference](./.env.example)
 
-## Development
-
-```bash
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test:unit
-```
-
-Contributions are welcome. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a pull request; community participation is governed by the [Code of Conduct](./CODE_OF_CONDUCT.md).
-
 ## Support and Security
 
-Use [GitHub Issues](https://github.com/mike840609/assets_tracker/issues) for reproducible bugs and feature requests. Report vulnerabilities privately through the [Security Policy](./SECURITY.md), not a public issue.
+Use [GitHub Issues](https://github.com/mike840609/assets_tracker/issues) for reproducible bugs and feature requests. Report vulnerabilities privately through the [Security Policy](./SECURITY.md).
 
 ## Data Responsibility
 
-Each deployment owner controls its OAuth credentials, PostgreSQL database, backups, cron secret, and optional monitoring integrations. astt is personal-tracking software, not financial, tax, or investment advice. Self-hosters are responsible for data security, privacy disclosures, regulatory compliance, backups, and access controls.
+astt is personal-tracking software, not financial, tax, or investment advice. Self-hosters are responsible for securing their deployment, data, backups, credentials, and access controls.
 
 ## License
 

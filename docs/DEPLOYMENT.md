@@ -123,11 +123,21 @@ Sentry is optional. Leave every Sentry variable unset for a no-op integration, o
 
 ## Upgrades and backups
 
-Back up PostgreSQL before upgrading. Then pull the release and rebuild:
+Back up PostgreSQL before upgrading and review the release notes for manual actions.
+
+For deployments using the published GHCR images:
+
+```bash
+git pull
+docker compose --profile full pull
+docker compose --profile full up --no-build -d
+```
+
+For deployments that build the application from source:
 
 ```bash
 git pull
 docker compose --profile full up --build -d
 ```
 
-The migration service applies pending schema changes before the new application starts. Review release notes for manual actions and test database restoration periodically. See [DATABASE.md](./DATABASE.md).
+The migration service applies pending schema changes before the new application starts. Test database restoration periodically. See [DATABASE.md](./DATABASE.md).

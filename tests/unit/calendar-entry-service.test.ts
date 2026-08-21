@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   findMany: vi.fn(),
+  cacheLife: vi.fn(),
+  cacheTag: vi.fn(),
   revalidateTag: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({
-  cacheLife: vi.fn(),
-  cacheTag: vi.fn(),
+  cacheLife: h.cacheLife,
+  cacheTag: h.cacheTag,
   revalidateTag: h.revalidateTag,
 }));
 
@@ -17,6 +19,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   getCalendarEntriesInRange,
+  getCalendarEntriesInRangeCached,
   invalidateCalendarEntryCaches,
 } from "@/lib/services/calendar-entry-service";
 
@@ -98,6 +101,34 @@ describe("calendar entry service", () => {
         },
       }),
     );
+  });
+
+  it("provides an uncached range read for API consumers", async () => {
+    h.findMany.mockResolvedValue([]);
+
+    await getCalendarEntriesInRange(
+      "user_1",
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-09-11T00:00:00.000Z"),
+    );
+
+    expect(h.findMany).toHaveBeenCalledOnce();
+    expect(h.cacheTag).not.toHaveBeenCalled();
+    expect(h.cacheLife).not.toHaveBeenCalled();
+  });
+
+  it("keeps page range reads tagged and cached", async () => {
+    h.findMany.mockResolvedValue([]);
+
+    await getCalendarEntriesInRangeCached(
+      "user_1",
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-09-11T00:00:00.000Z"),
+    );
+
+    expect(h.cacheTag).toHaveBeenNthCalledWith(1, "calendar-entries");
+    expect(h.cacheTag).toHaveBeenNthCalledWith(2, "calendar-entries:user_1");
+    expect(h.cacheLife).toHaveBeenCalledWith("hours");
   });
 
   it("invalidates global and user-scoped tags immediately for formal users", () => {

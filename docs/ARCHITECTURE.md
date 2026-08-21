@@ -2,6 +2,8 @@
 
 astt is a Next.js App Router application backed by PostgreSQL through Prisma. Server Components read through service modules, Route Handlers and Server Actions perform mutations, and cache tags invalidate affected views.
 
+The current application stack is Next.js 16, React 19, Prisma 7, PostgreSQL, Tailwind CSS 4, and NextAuth.js 5.
+
 ## Major boundaries
 
 - `src/app/` — routes, layouts, Server Components, and API handlers

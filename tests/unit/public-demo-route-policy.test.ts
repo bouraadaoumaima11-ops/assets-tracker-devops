@@ -202,7 +202,7 @@ describe("public Demo route policy", () => {
     ["src/lib/services/account-service.ts", "countActiveAccountsInner", ["accounts:${userId}"]],
     [
       "src/lib/services/calendar-entry-service.ts",
-      "getCalendarEntriesInRange",
+      "getCalendarEntriesInRangeCached",
       ["calendar-entries:${userId}"],
     ],
     [
