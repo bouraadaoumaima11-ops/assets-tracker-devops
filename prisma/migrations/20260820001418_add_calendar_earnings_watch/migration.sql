@@ -1,5 +1,5 @@
 -- CreateTable
-CREATE TABLE "CalendarEarningsWatch" (
+CREATE TABLE IF NOT EXISTS "CalendarEarningsWatch" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "symbol" TEXT NOT NULL,
@@ -11,13 +11,25 @@ CREATE TABLE "CalendarEarningsWatch" (
 );
 
 -- CreateIndex
-CREATE INDEX "CalendarEarningsWatch_userId_idx" ON "CalendarEarningsWatch"("userId");
+CREATE INDEX IF NOT EXISTS "CalendarEarningsWatch_userId_idx" ON "CalendarEarningsWatch"("userId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CalendarEarningsWatch_userId_symbol_key" ON "CalendarEarningsWatch"("userId", "symbol");
+CREATE UNIQUE INDEX IF NOT EXISTS "CalendarEarningsWatch_userId_symbol_key" ON "CalendarEarningsWatch"("userId", "symbol");
 
 -- AddForeignKey
-ALTER TABLE "CalendarEarningsWatch" ADD CONSTRAINT "CalendarEarningsWatch_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'CalendarEarningsWatch_userId_fkey'
+      AND conrelid = '"CalendarEarningsWatch"'::regclass
+  ) THEN
+    ALTER TABLE "CalendarEarningsWatch"
+      ADD CONSTRAINT "CalendarEarningsWatch_userId_fkey"
+      FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- RenameIndex
 --
