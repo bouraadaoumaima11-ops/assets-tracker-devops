@@ -23,8 +23,8 @@ function stubQuote(symbol: string) {
     currency: "USD",
     longName: `${upper} Test Co.`,
     shortName: upper,
-    exchange: "E2E",
-    fullExchangeName: "E2E Exchange",
+    exchange: "NMS",
+    fullExchangeName: "NasdaqGS",
   };
 }
 
@@ -37,7 +37,7 @@ function createE2eStubClient() {
           ...stubQuote(query),
           longname: `${query.toUpperCase()} Test Co.`,
           shortname: query.toUpperCase(),
-          exchDisp: "E2E Exchange",
+          exchDisp: "NasdaqGS",
         },
       ],
     }),

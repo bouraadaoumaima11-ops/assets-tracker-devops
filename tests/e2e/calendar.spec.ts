@@ -268,6 +268,17 @@ test.describe("calendar entry workflows", () => {
       const agenda = page.getByRole("region", { name: /on Tuesday, October 18, 2033/ });
       await expect(grid).toBeVisible();
       await expect(agenda).toBeVisible();
+      const selectedDateButton = page.getByRole("gridcell", { selected: true }).getByRole("button");
+      const mobileNavigation = page.getByRole("navigation");
+      await expect
+        .poll(async () => {
+          const [dateBox, navigationBox] = await Promise.all([
+            selectedDateButton.boundingBox(),
+            mobileNavigation.boundingBox(),
+          ]);
+          return Boolean(dateBox && navigationBox && dateBox.y + dateBox.height <= navigationBox.y);
+        })
+        .toBe(true);
       await expect
         .poll(async () => {
           const [gridBox, agendaBox] = await Promise.all([
@@ -519,5 +530,107 @@ test.describe("calendar entry workflows", () => {
     } finally {
       await clearCalendarRange(request, from, to);
     }
+  });
+
+  test("earnings watch manager exposes close controls and reachable mobile content", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(60_000);
+
+    const watchItems = Array.from({ length: 8 }, (_, index) => ({
+      id: `watch-${index}`,
+      symbol: `STK${index}`,
+      name: `Watched stock ${index}`,
+      source: index % 2 === 0 ? "manual" : "tracked",
+    }));
+    const trackedStocks = Array.from({ length: 8 }, (_, index) => ({
+      id: `tracked-${index}`,
+      symbol: `TRK${index}`,
+      name: `Tracked stock ${index}`,
+      assetType: "STOCK",
+      currency: "USD",
+    }));
+
+    await page.route("**/api/calendar-earnings-watch", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: watchItems }),
+      });
+    });
+    await page.route("**/api/stocks", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ data: trackedStocks }),
+      });
+    });
+
+    if (testInfo.project.name === "chromium") {
+      await page.goto("/calendar?month=2036-08&date=2036-08-20");
+      await page.getByRole("button", { name: "Manage earnings watch" }).click();
+
+      const dialog = page.getByRole("dialog", { name: "Earnings watch" });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Close" }).click();
+      await expect(dialog).not.toBeVisible();
+      return;
+    }
+
+    test.skip(testInfo.project.name !== "Mobile Chrome", "Responsive calendar projects only");
+    await page.goto("/goals?month=2031-08&date=2031-08-20#calendar");
+    const selectedDateButton = page.getByRole("gridcell", { selected: true }).getByRole("button");
+    const mobileNavigation = page.getByRole("navigation");
+    await expect
+      .poll(async () => {
+        const [dateBox, navigationBox] = await Promise.all([
+          selectedDateButton.boundingBox(),
+          mobileNavigation.boundingBox(),
+        ]);
+        return Boolean(dateBox && navigationBox && dateBox.y + dateBox.height <= navigationBox.y);
+      })
+      .toBe(true);
+    await page.getByRole("button", { name: "Manage earnings watch" }).click();
+
+    const drawer = page.getByRole("dialog", { name: "Earnings watch" });
+    await expect(drawer).toBeVisible();
+    const closeButton = drawer.getByRole("button", { name: "Close" });
+    await expect(closeButton).toBeVisible();
+    await expect
+      .poll(async () => {
+        const [closeBox, drawerBox] = await Promise.all([
+          closeButton.boundingBox(),
+          drawer.boundingBox(),
+        ]);
+        return Boolean(
+          closeBox &&
+          drawerBox &&
+          closeBox.x >= drawerBox.x &&
+          closeBox.y >= drawerBox.y &&
+          closeBox.width >= 44 &&
+          closeBox.height >= 44,
+        );
+      })
+      .toBe(true);
+
+    const trackedHeading = drawer.getByRole("heading", { name: "Tracked stocks" });
+    await trackedHeading.scrollIntoViewIfNeeded();
+    await expect
+      .poll(async () => {
+        const [box, viewport] = await Promise.all([
+          trackedHeading.boundingBox(),
+          Promise.resolve(page.viewportSize()),
+        ]);
+        return Boolean(box && viewport && box.y >= 0 && box.y + box.height <= viewport.height);
+      })
+      .toBe(true);
+
+    await closeButton.click();
+    await expect(drawer).not.toBeVisible();
   });
 });

@@ -24,6 +24,22 @@ describe("calendar route integration", () => {
     expect(source).toContain("<CalendarView");
   });
 
+  it("passes holding search messages to the calendar client provider", () => {
+    const source = fs.readFileSync(path.join(root, "src/app/(main)/calendar/page.tsx"), "utf8");
+    const namespaceBlock = source.slice(
+      source.indexOf("const CLIENT_NAMESPACES"),
+      source.indexOf("];", source.indexOf("const CLIENT_NAMESPACES")) + 2,
+    );
+
+    expect(namespaceBlock).toContain('"holdingSearch"');
+    for (const locale of ["en-US", "zh-TW"]) {
+      const messages = JSON.parse(
+        fs.readFileSync(path.join(root, "messages", `${locale}.json`), "utf8"),
+      );
+      expect(messages).toHaveProperty("holdingSearch");
+    }
+  });
+
   it("keeps desktop navigation and shortcuts in the same order", () => {
     const sidebar = fs.readFileSync(path.join(root, "src/components/layout/sidebar.tsx"), "utf8");
     const desktop = fs.readFileSync(

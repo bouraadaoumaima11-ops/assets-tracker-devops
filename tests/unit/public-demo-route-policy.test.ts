@@ -42,6 +42,11 @@ const expectedPolicies: Record<string, Record<string, DemoPolicy>> = {
   "src/app/api/accounts/[id]/transactions/route.ts": { GET: "allow" },
   "src/app/api/accounts/reorder/route.ts": { PATCH: "allow" },
   "src/app/api/accounts/route.ts": { DELETE: "allow", GET: "allow", POST: "allow" },
+  "src/app/api/calendar-earnings-watch/route.ts": {
+    DELETE: "allow",
+    GET: "allow",
+    POST: "allow",
+  },
   "src/app/api/calendar-entries/[id]/route.ts": { DELETE: "allow", PATCH: "allow" },
   "src/app/api/calendar-entries/route.ts": { GET: "allow", POST: "allow" },
   "src/app/api/goals/[id]/route.ts": { DELETE: "allow", PATCH: "allow" },
@@ -187,6 +192,7 @@ describe("public Demo route policy", () => {
     );
 
     expect(actual).toEqual({
+      "src/app/api/calendar-earnings-watch/route.ts": { POST: "refresh-credit" },
       "src/app/api/stocks/quote/route.ts": { GET: "refresh-credit" },
       "src/app/api/stocks/route.ts": { POST: "refresh-credit" },
     });

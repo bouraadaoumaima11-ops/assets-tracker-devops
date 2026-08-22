@@ -3,9 +3,10 @@
 import { useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, ListChecks, Plus } from "lucide-react";
 
 import { CalendarDayAgenda } from "@/components/calendar/calendar-day-agenda";
+import { CalendarEarningsManager } from "@/components/calendar/calendar-earnings-manager";
 import { CalendarEntryForm } from "@/components/calendar/calendar-entry-form";
 import { CalendarMonthGrid } from "@/components/calendar/calendar-month-grid";
 import { buildCalendarNavigationHref } from "@/components/calendar/calendar-navigation";
@@ -13,6 +14,7 @@ import { groupCalendarEntriesByDate } from "@/components/calendar/calendar-view-
 import { LargeTitleHeading } from "@/components/layout/large-title-heading";
 import { Button } from "@/components/ui/button";
 import { moveCalendarMonth } from "@/lib/calendar-date";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedCalendarEntry } from "@/lib/types";
 
 type CalendarViewProps = {
@@ -22,6 +24,7 @@ type CalendarViewProps = {
   today: string;
   locale: string;
   showHeader?: boolean;
+  earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>;
 };
 
 export function CalendarView({
@@ -30,6 +33,7 @@ export function CalendarView({
   today,
   locale,
   showHeader = true,
+  earningsByDate,
 }: CalendarViewProps) {
   const t = useTranslations("calendar");
   const router = useRouter();
@@ -38,6 +42,7 @@ export function CalendarView({
   const agendaRef = useRef<HTMLDivElement>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingEntry, setEditingEntry] = useState<SerializedCalendarEntry | null>(null);
+  const [managerOpen, setManagerOpen] = useState(false);
   const [, startTransition] = useTransition();
   const [optimisticDate, setOptimisticDate] = useOptimistic(selectedDate);
   const effectiveDate = optimisticDate;
@@ -124,10 +129,16 @@ export function CalendarView({
           </Button>
         </div>
 
-        <Button type="button" mobileTouch onClick={addEntry}>
-          <Plus data-icon="inline-start" />
-          {t("addEntry")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" mobileTouch onClick={() => setManagerOpen(true)}>
+            <ListChecks data-icon="inline-start" />
+            {t("earningsWatch.manage")}
+          </Button>
+          <Button type="button" mobileTouch onClick={addEntry}>
+            <Plus data-icon="inline-start" />
+            {t("addEntry")}
+          </Button>
+        </div>
       </div>
 
       <div className="gap-4 md:grid md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)] md:items-start">
@@ -138,11 +149,13 @@ export function CalendarView({
           entriesByDate={entriesByDate}
           locale={locale}
           onSelectDate={selectDate}
+          earningsByDate={earningsByDate}
         />
         <div ref={agendaRef} className="mt-4 scroll-mt-4 md:sticky md:top-4 md:mt-0">
           <CalendarDayAgenda
             date={effectiveDate}
             entries={entriesByDate.get(effectiveDate) ?? []}
+            earnings={earningsByDate?.get(effectiveDate) ?? []}
             locale={locale}
             onAdd={addEntry}
             onEdit={editEntry}
@@ -161,6 +174,8 @@ export function CalendarView({
         entry={editingEntry}
         onSaved={handleMutationComplete}
       />
+
+      <CalendarEarningsManager open={managerOpen} onOpenChange={setManagerOpen} />
     </div>
   );
 }

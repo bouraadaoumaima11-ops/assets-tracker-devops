@@ -4,6 +4,7 @@ import {
   getClientIpFromHeaders,
   rateLimitCheckWithPrune,
   rateLimitKeyForClientIp,
+  rateLimitSubjectCheckWithPrune,
 } from "@/lib/rate-limit";
 import * as rateLimit from "@/lib/rate-limit";
 
@@ -132,5 +133,21 @@ describe("rateLimitCheckWithPrune", () => {
         key: rateLimitKeyForClientIp(secondRequest, "xff-rightmost-test"),
       })?.status,
     ).toBe(429);
+  });
+});
+
+describe("rateLimitSubjectCheckWithPrune", () => {
+  it("limits each subject and purpose independently without storing raw identities", () => {
+    const subject = `calendar-earnings-${Math.random().toString(36).slice(2)}`;
+    const options = { limit: 5, windowMs: 60_000, prefix: "calendar-earnings-test" };
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      expect(rateLimitSubjectCheckWithPrune(subject, "yahoo", options)).toBe(false);
+    }
+    expect(rateLimitSubjectCheckWithPrune(subject, "yahoo", options)).toBe(true);
+    expect(rateLimitSubjectCheckWithPrune(`${subject}-other`, "yahoo", options)).toBe(false);
+    expect(rateLimitSubjectCheckWithPrune(subject, "other-provider", options)).toBe(false);
+
+    expect(rateLimit.__getRateLimitStoreKeysForTest().join("\n")).not.toContain(subject);
   });
 });

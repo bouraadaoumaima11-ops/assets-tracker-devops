@@ -16,14 +16,14 @@ describe("calendar mobile touch targets", () => {
   });
 
   it.each([
-    ["toolbar", "src/components/calendar/calendar-view.tsx"],
-    ["agenda", "src/components/calendar/calendar-day-agenda.tsx"],
-  ])("applies the mobile target to every named %s action", (_, relativePath) => {
+    ["toolbar", "src/components/calendar/calendar-view.tsx", 5],
+    ["agenda", "src/components/calendar/calendar-day-agenda.tsx", 4],
+  ])("applies the mobile target to every named %s action", (_, relativePath, expectedCount) => {
     const source = readFileSync(join(process.cwd(), relativePath), "utf8");
     const actionCount = source.match(/<Button\b/g)?.length ?? 0;
     const mobileTouchCount = source.match(/\bmobileTouch\b/g)?.length ?? 0;
 
-    expect(actionCount).toBe(4);
+    expect(actionCount).toBe(expectedCount);
     expect(mobileTouchCount).toBe(actionCount);
   });
 

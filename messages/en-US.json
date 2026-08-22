@@ -33,6 +33,12 @@
     "categoryCount": "{category}: {count}",
     "entryCount": "{count, plural, =0 {No entries} =1 {1 entry} other {# entries}}",
     "entriesOnDate": "{count, plural, =0 {No entries on {date}} =1 {1 entry on {date}} other {# entries on {date}}}",
+    "earnings": "Earnings",
+    "earningsBadge": "Earnings on {count} stock(s)",
+    "earningsSection": "Earnings",
+    "beforeOpen": "Before open",
+    "afterClose": "After close",
+    "estimate": "Estimate",
     "emptyTitle": "Nothing scheduled",
     "emptyDescription": "Add a report, economic release, or reminder for this day.",
     "keyboardHint": "Use arrow keys to move by day. Page Up and Page Down change month.",
@@ -78,6 +84,22 @@
       "timeInvalid": "Choose a valid time",
       "categoryInvalid": "Choose a category",
       "sourceInvalid": "Use a valid http or https URL"
+    },
+    "earningsWatch": {
+      "manage": "Manage earnings watch",
+      "title": "Earnings watch",
+      "watchList": "Watched stocks",
+      "empty": "No stocks watched yet",
+      "addManual": "Add by search",
+      "searchLabel": "Search stocks",
+      "searchPlaceholder": "Search by symbol or name…",
+      "trackedStocks": "Tracked stocks",
+      "trackedEmpty": "No tracked stocks",
+      "manual": "Manual",
+      "tracked": "Tracked",
+      "remove": "Remove {symbol}",
+      "loadFailed": "Could not load earnings watch",
+      "mutationFailed": "Could not update earnings watch"
     }
   },
   "commandPalette": {

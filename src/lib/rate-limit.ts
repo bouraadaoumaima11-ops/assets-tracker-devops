@@ -66,12 +66,12 @@ export function rateLimitKeyForSubject(subject: string, purpose: string): string
   return rateLimitKeyForIdentity(subject, `subject/${purpose}`);
 }
 
-/**
- * Check the rate limit for the incoming request.
- *
- * @returns A 429 Response if the limit is exceeded, otherwise `null`.
- */
-function rateLimitCheck(request: Request, options: RateLimitOptions): Response | null {
+type RateLimitDecision = {
+  retryAfter: number;
+  resetAt: number;
+};
+
+function checkRateLimit(options: RateLimitOptions): RateLimitDecision | null {
   const { limit, windowMs = 60_000, prefix = "rl" } = options;
   if (!options.key) throw new Error("Rate limiter requires an explicit key");
   const key = `${prefix}:${options.key}`;
@@ -88,20 +88,36 @@ function rateLimitCheck(request: Request, options: RateLimitOptions): Response |
   entry.count += 1;
 
   if (entry.count > limit) {
-    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
-    return new Response(JSON.stringify({ error: { message: "Too many requests" } }), {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": String(retryAfter),
-        "X-RateLimit-Limit": String(limit),
-        "X-RateLimit-Remaining": "0",
-        "X-RateLimit-Reset": String(Math.ceil(entry.resetAt / 1000)),
-      },
-    });
+    return {
+      retryAfter: Math.ceil((entry.resetAt - now) / 1000),
+      resetAt: entry.resetAt,
+    };
   }
 
   return null;
+}
+
+/**
+ * Check the rate limit for the incoming request.
+ *
+ * @returns A 429 Response if the limit is exceeded, otherwise `null`.
+ */
+function rateLimitCheck(request: Request, options: RateLimitOptions): Response | null {
+  void request;
+  const decision = checkRateLimit(options);
+  if (decision === null) return null;
+
+  const { limit } = options;
+  return new Response(JSON.stringify({ error: { message: "Too many requests" } }), {
+    status: 429,
+    headers: {
+      "Content-Type": "application/json",
+      "Retry-After": String(decision.retryAfter),
+      "X-RateLimit-Limit": String(limit),
+      "X-RateLimit-Remaining": "0",
+      "X-RateLimit-Reset": String(Math.ceil(decision.resetAt / 1000)),
+    },
+  });
 }
 
 /**
@@ -125,6 +141,20 @@ export function rateLimitCheckWithPrune(
 ): Response | null {
   maybePrune();
   return rateLimitCheck(request, options);
+}
+
+export function rateLimitSubjectCheckWithPrune(
+  subject: string,
+  purpose: string,
+  options: Omit<RateLimitOptions, "key">,
+): boolean {
+  maybePrune();
+  return (
+    checkRateLimit({
+      ...options,
+      key: rateLimitKeyForSubject(subject, purpose),
+    }) !== null
+  );
 }
 
 /** Test-only inspection that proves raw request identity values never enter the store. */

@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useRef, type KeyboardEvent } from "react";
 import { useTranslations } from "next-intl";
+import { CalendarIcon } from "lucide-react";
 
 import { CalendarCategoryBadge } from "@/components/calendar/calendar-category-badge";
 import {
@@ -9,6 +10,7 @@ import {
   summarizeCalendarEntryCategories,
 } from "@/components/calendar/calendar-view-model";
 import { addCalendarDays, buildMonthGrid, moveCalendarMonth } from "@/lib/calendar-date";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import { cn } from "@/lib/utils";
 import { CALENDAR_ENTRY_CATEGORIES, type SerializedCalendarEntry } from "@/lib/types";
 
@@ -19,6 +21,7 @@ type CalendarMonthGridProps = {
   entriesByDate: ReadonlyMap<string, readonly SerializedCalendarEntry[]>;
   locale: string;
   onSelectDate: (date: string, source: "pointer" | "keyboard") => void;
+  earningsByDate?: ReadonlyMap<string, CalendarEarningsItem[]>;
 };
 
 const MONDAY_UTC = Date.UTC(1970, 0, 5);
@@ -31,12 +34,14 @@ export function CalendarMonthGrid({
   entriesByDate,
   locale,
   onSelectDate,
+  earningsByDate,
 }: CalendarMonthGridProps) {
   const t = useTranslations("calendar");
   const headingId = useId();
   const days = useMemo(() => buildMonthGrid(month), [month]);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
   const pendingFocusDate = useRef<string | null>(null);
+  const initialMobileReveal = useRef(false);
   const weekdayFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" }),
     [locale],
@@ -86,6 +91,18 @@ export function CalendarMonthGrid({
     return () => cancelAnimationFrame(frame);
   }, [month, selectedDate]);
 
+  useEffect(() => {
+    if (initialMobileReveal.current || !window.matchMedia("(max-width: 767px)").matches) return;
+
+    const frame = requestAnimationFrame(() => {
+      const button = buttonRefs.current.get(selectedDate);
+      if (!button) return;
+      button.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+      initialMobileReveal.current = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedDate]);
+
   function selectAndFocus(date: string, source: "pointer" | "keyboard") {
     pendingFocusDate.current = isCalendarFocusDestinationReady({
       pendingDate: date,
@@ -132,7 +149,7 @@ export function CalendarMonthGrid({
         </h2>
         <ul
           aria-label={t("categoryLegend")}
-          className="flex max-w-full gap-1.5 overflow-x-auto pb-1 lg:flex-wrap lg:justify-end lg:overflow-visible lg:pb-0"
+          className="flex min-w-0 max-w-full gap-1.5 overflow-x-auto overscroll-x-contain pb-1 scrollbar-none lg:flex-wrap lg:justify-end lg:overflow-visible lg:pb-0"
         >
           {CALENDAR_ENTRY_CATEGORIES.map((category) => (
             <li key={category} className="shrink-0">
@@ -165,6 +182,7 @@ export function CalendarMonthGrid({
               {days.slice(weekIndex * 7, weekIndex * 7 + 7).map((date, dayIndex) => {
                 const index = weekIndex * 7 + dayIndex;
                 const entries = entriesByDate.get(date) ?? [];
+                const dayEarnings = earningsByDate?.get(date) ?? [];
                 const categoryCounts = summarizeCalendarEntryCategories(entries);
                 const categories = [...new Set(entries.map((entry) => entry.category))];
                 const shownCategories = categories.slice(0, 3);
@@ -174,6 +192,22 @@ export function CalendarMonthGrid({
                 const isCurrentMonth = date.startsWith(month);
                 const fullDate = dateFormatter.format(new Date(`${date}T00:00:00.000Z`));
                 const countLabel = t("entryCount", { count: entries.length });
+                const earningsHint =
+                  dayEarnings.length > 0 ? t("earningsBadge", { count: dayEarnings.length }) : null;
+                const earningsTooltip =
+                  dayEarnings.length > 0
+                    ? `${earningsHint}: ${dayEarnings
+                        .map((item) => {
+                          const session =
+                            item.session === "BMO"
+                              ? t("beforeOpen")
+                              : item.session === "AMC"
+                                ? t("afterClose")
+                                : t("earnings");
+                          return `${item.symbol} (${session})`;
+                        })
+                        .join(", ")}`
+                    : undefined;
                 const categorySummary =
                   categoryCounts.length > 0
                     ? t("categorySummary", {
@@ -207,13 +241,14 @@ export function CalendarMonthGrid({
                       type="button"
                       tabIndex={isSelected ? 0 : -1}
                       aria-current={isToday ? "date" : undefined}
-                      aria-label={[fullDate, countLabel, categorySummary]
+                      title={earningsTooltip}
+                      aria-label={[fullDate, countLabel, categorySummary, earningsHint]
                         .filter(Boolean)
                         .join(", ")}
                       onClick={() => selectAndFocus(date, "pointer")}
                       onKeyDown={(event) => handleKeyDown(event, date, index)}
                       className={cn(
-                        "flex min-h-16 w-full flex-col items-center gap-1 px-1.5 py-2 text-center outline-none motion-fast sm:min-h-20 sm:items-start sm:text-left",
+                        "flex min-h-16 w-full scroll-mb-24 flex-col items-center gap-1 px-1.5 py-2 text-center outline-none motion-fast sm:min-h-20 sm:items-start sm:text-left",
                         "transition-colors duration-150 ease-[var(--ease-micro)]",
                         "motion-reduce:transition-none",
                         "hover:bg-foreground/8",
@@ -253,6 +288,16 @@ export function CalendarMonthGrid({
                               +{remainingCategories}
                             </span>
                           )}
+                        </span>
+                      )}
+
+                      {dayEarnings.length > 0 && (
+                        <span
+                          aria-label={t("earningsBadge", { count: dayEarnings.length })}
+                          className="mt-auto inline-flex items-center gap-1 rounded-full bg-chart-5/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-5"
+                        >
+                          <CalendarIcon className="size-2.5" />
+                          {dayEarnings.length > 1 ? dayEarnings.length : t("earnings")}
                         </span>
                       )}
                     </button>

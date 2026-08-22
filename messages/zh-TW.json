@@ -33,6 +33,12 @@
     "categoryCount": "{category}：{count}",
     "entryCount": "{count, plural, =0 {沒有項目} other {# 個項目}}",
     "entriesOnDate": "{count, plural, =0 {{date}沒有項目} other {{date}有 # 個項目}}",
+    "earnings": "財報",
+    "earningsBadge": "{count} 檔財報",
+    "earningsSection": "財報",
+    "beforeOpen": "盤前",
+    "afterClose": "盤後",
+    "estimate": "估計",
     "emptyTitle": "尚無安排",
     "emptyDescription": "為這一天新增報告、經濟數據或提醒。",
     "keyboardHint": "使用方向鍵逐日移動。Page Up 與 Page Down 可切換月份。",
@@ -78,6 +84,22 @@
       "timeInvalid": "請選擇有效時間",
       "categoryInvalid": "請選擇類別",
       "sourceInvalid": "請使用有效的 http 或 https 網址"
+    },
+    "earningsWatch": {
+      "manage": "管理財報追蹤",
+      "title": "財報追蹤",
+      "watchList": "追蹤中的股票",
+      "empty": "尚未追蹤任何股票",
+      "addManual": "搜尋新增",
+      "searchLabel": "搜尋股票",
+      "searchPlaceholder": "以代號或名稱搜尋…",
+      "trackedStocks": "自選股",
+      "trackedEmpty": "沒有自選股",
+      "manual": "手動",
+      "tracked": "自選",
+      "remove": "移除 {symbol}",
+      "loadFailed": "無法載入財報追蹤",
+      "mutationFailed": "無法更新財報追蹤"
     }
   },
   "commandPalette": {

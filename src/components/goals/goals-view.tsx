@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { ArrowUpDown, CheckCircle2, GripVertical, Plus, Save, Target, X } from "lucide-react";
 import type { GoalWithProgress, SerializedAccount, SerializedCalendarEntry } from "@/lib/types";
 import type { ProjectionData } from "@/lib/services/projection-service";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedTrackedStock } from "@/lib/services/stock-watch-service";
 import { ProjectionView } from "@/components/projections/projection-view";
 import { StockTrackerView } from "@/components/stocks/stock-tracker-view";
@@ -39,6 +40,7 @@ interface GoalsViewProps {
   projectionData: ProjectionData;
   stocks: SerializedTrackedStock[];
   calendarEntries: SerializedCalendarEntry[];
+  earningsByDate: ReadonlyMap<string, CalendarEarningsItem[]>;
   calendarMonth: string;
   calendarSelectedDate: string;
   calendarToday: string;
@@ -120,6 +122,7 @@ export function GoalsView({
   projectionData,
   stocks,
   calendarEntries,
+  earningsByDate,
   calendarMonth,
   calendarSelectedDate,
   calendarToday,
@@ -221,7 +224,7 @@ export function GoalsView({
       <div
         role="tablist"
         aria-orientation="horizontal"
-        className="md:hidden flex overflow-x-auto border-b"
+        className="md:hidden flex min-w-0 overflow-x-auto overscroll-x-contain border-b scrollbar-none"
       >
         {MOBILE_PLAN_TABS.map((tab) => (
           <button
@@ -353,7 +356,7 @@ export function GoalsView({
         role="tabpanel"
         aria-labelledby={getMobilePlanTabId("calendar")}
         hidden={activeTab !== "calendar"}
-        className="md:hidden"
+        className="pb-20 md:hidden"
       >
         <CalendarView
           initialEntries={calendarEntries}
@@ -362,6 +365,7 @@ export function GoalsView({
           today={calendarToday}
           locale={locale}
           showHeader={false}
+          earningsByDate={earningsByDate}
         />
       </div>
     </div>

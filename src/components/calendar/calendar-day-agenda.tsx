@@ -20,21 +20,34 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { CalendarEarningsItem } from "@/lib/services/calendar-earnings-data";
 import type { SerializedCalendarEntry } from "@/lib/types";
 
 type CalendarDayAgendaProps = {
   date: string;
   entries: readonly SerializedCalendarEntry[];
+  earnings?: readonly CalendarEarningsItem[];
   locale: string;
   onAdd: () => void;
   onEdit: (entry: SerializedCalendarEntry) => void;
   onDeleted: () => void;
 };
 
+function sessionLabel(
+  t: (key: "beforeOpen" | "afterClose") => string,
+  session: CalendarEarningsItem["session"],
+): string {
+  if (session === "BMO") return t("beforeOpen");
+  if (session === "AMC") return t("afterClose");
+  return "";
+}
+
 export function CalendarDayAgenda({
   date,
   entries,
+  earnings,
   locale,
   onAdd,
   onEdit,
@@ -86,6 +99,35 @@ export function CalendarDayAgenda({
           </span>
         </div>
       </header>
+
+      {earnings && earnings.length > 0 && (
+        <section aria-label={t("earningsSection")} className="border-b px-4 py-3">
+          <h3 className="text-xs font-semibold text-chart-5">{t("earnings")}</h3>
+          <ul className="mt-2 space-y-2">
+            {earnings.map((e) => (
+              <li key={e.symbol} className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
+                <span className="shrink-0 font-mono font-semibold">{e.symbol}</span>
+                <span className="min-w-0 flex-1 break-words text-muted-foreground">{e.name}</span>
+                {e.session !== "UNKNOWN" && (
+                  <Badge className="shrink-0" variant="secondary">
+                    {sessionLabel(t, e.session)}
+                  </Badge>
+                )}
+                {e.isEstimate && (
+                  <Badge className="shrink-0" variant="outline">
+                    {t("estimate")}
+                  </Badge>
+                )}
+                {e.epsForward !== null && (
+                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                    EPS {e.epsForward}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {sortedEntries.length === 0 ? (
         <div className="flex min-h-44 flex-col items-start justify-center px-4 py-6">
