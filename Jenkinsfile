@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 environment {
     SONAR_SERVER = 'SonarQube'
     AUTH_SECRET = credentials('assets-auth-secret')
@@ -149,7 +149,7 @@ post {
             to: 'bouraadaoumaima11@gmail.com',
             subject: "ALERT: Échec dans le Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: """Attention,
-```
+
 
 Une erreur est survenue pendant l exécution du pipeline.
 
@@ -162,11 +162,11 @@ ${env.BUILD_URL}console
 )
 }
 
-```
+
     success {
         echo 'Pipeline exécuté avec succès jusqu à la Production !'
     }
 }
-```
+
 
 }
