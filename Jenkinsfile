@@ -1,27 +1,46 @@
 pipeline {
     agent any
 
-    tools {
-        nodejs 'NodeJS-20'
-    }
-
     environment {
         SONAR_SERVER = 'SonarQube'
         AUTH_SECRET = credentials('assets-auth-secret')
         CRON_SECRET = credentials('assets-cron-secret')
     }
 
-    stages {
-        stage('1. Build') {
-            steps {
-                echo 'Récupération du code source et compilation...'
-                checkout scm
-                sh 'docker compose build '
-            }
-        }
+    tools {
+        nodejs 'NodeJS-18'
+    }
+
+    stage('1. Build') {
+    steps {
+        echo 'Récupération du code source et compilation...'
+        checkout scm
+
+        sh '''
+            echo "=== Node.js ==="
+            node --version
+
+            echo "=== npm ==="
+            npm --version
+
+            echo "=== pnpm ==="
+            pnpm --version
+
+            echo "=== Vérification des secrets ==="
+            test -n "$AUTH_SECRET"
+            test -n "$CRON_SECRET"
+            echo "Les deux secrets sont présents."
+
+            echo "=== Docker Compose Build ==="
+            docker compose build
+        '''
+    }
+}
 
        stage('2. Tests') {
     steps {
+        echo 'Exécution des tests automatisés...'
+
         sh '''
             echo "=== Vérification Node.js ==="
             node --version
@@ -31,9 +50,13 @@ pipeline {
 
             echo "=== Vérification pnpm ==="
             pnpm --version
+
+            echo "=== Tests unitaires ==="
+            pnpm test:unit
         '''
     }
 }
+
 
         stage('3. SonarQube (Pre-Quality, Security & Quality Gate)') {
             steps {
@@ -41,7 +64,7 @@ pipeline {
                 script {
                     def scannerHome = tool 'sonar-scanner'
                     withSonarQubeEnv("${SONAR_SERVER}") {
-                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=assets-tracker -Dsonar.sources=."
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=assets-tracker -Dsonar.sources=. -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json"
                     }
                 }
                 
