@@ -1,11 +1,15 @@
 pipeline {
     agent any
 
+    tools {
+        nodejs 'NodeJS-20'
+    }
+
     environment {
-    SONAR_SERVER = 'SonarQube'
-    AUTH_SECRET = credentials('assets-auth-secret')
-    CRON_SECRET = credentials('assets-cron-secret')
-}
+        SONAR_SERVER = 'SonarQube'
+        AUTH_SECRET = credentials('assets-auth-secret')
+        CRON_SECRET = credentials('assets-cron-secret')
+    }
 
     stages {
         stage('1. Build') {
