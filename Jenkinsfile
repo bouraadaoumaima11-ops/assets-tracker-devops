@@ -11,64 +11,64 @@ pipeline {
         nodejs 'NodeJS-18'
     }
 
-    stage('1. Build') {
-    steps {
-        echo 'Récupération du code source et compilation...'
-        checkout scm
+    stages {
 
-        sh '''
-            echo "=== Node.js ==="
-            node --version
+        stage('1. Build') {
+            steps {
+                echo 'Récupération du code source et compilation...'
+                checkout scm
 
-            echo "=== npm ==="
-            npm --version
+                sh '''
+                    echo "=== Node.js ==="
+                    node --version
 
-            echo "=== pnpm ==="
-            pnpm --version
+                    echo "=== npm ==="
+                    npm --version
 
-            echo "=== Vérification des secrets ==="
-            test -n "$AUTH_SECRET"
-            test -n "$CRON_SECRET"
-            echo "Les deux secrets sont présents."
+                    echo "=== pnpm ==="
+                    pnpm --version
 
-            echo "=== Docker Compose Build ==="
-            docker compose build
-        '''
-    }
-}
+                    echo "=== Vérification des secrets ==="
+                    test -n "$AUTH_SECRET"
+                    test -n "$CRON_SECRET"
+                    echo "Les deux secrets sont présents."
 
-       stage('2. Tests') {
-    steps {
-        echo 'Exécution des tests automatisés...'
+                    echo "=== Docker Compose Build ==="
+                    docker compose build
+                '''
+            }
+        }
 
-        sh '''
-            echo "=== Vérification Node.js ==="
-            node --version
+        stage('2. Tests') {
+            steps {
+                echo 'Exécution des tests automatisés...'
 
-            echo "=== Vérification npm ==="
-            npm --version
-
-            echo "=== Vérification pnpm ==="
-            pnpm --version
-
-            echo "=== Tests unitaires ==="
-            pnpm test:unit
-        '''
-    }
-}
-
+                sh '''
+                    echo "=== Tests unitaires ==="
+                    pnpm test:unit
+                '''
+            }
+        }
 
         stage('3. SonarQube (Pre-Quality, Security & Quality Gate)') {
             steps {
                 echo 'Analyse du code source avec SonarQube...'
+
                 script {
                     def scannerHome = tool 'sonar-scanner'
+
                     withSonarQubeEnv("${SONAR_SERVER}") {
-                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=assets-tracker -Dsonar.sources=. -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json"
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=assets-tracker \
+                            -Dsonar.sources=. \
+                            -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json
+                        """
                     }
                 }
-                
+
                 echo 'Vérification du Quality Gate...'
+
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
@@ -77,23 +77,33 @@ pipeline {
 
         stage('4. Scan des Dépendances') {
             steps {
-                echo 'Audit de sécurité des dépendances externes (DevSecOps)...'
-                sh 'echo "Scan des dépendances terminé : Aucune vulnérabilité critique détectée !"'
+                echo 'Audit de sécurité des dépendances externes...'
+
+                sh '''
+                    pnpm audit --audit-level=high
+                '''
             }
         }
 
         stage('5. Pré-production') {
             steps {
-                echo 'Déploiement sur l environnement de Pré-Production (Staging)...'
-                sh 'echo "Application déployée en Pré-Prod sur le port 8081."'
+                echo 'Déploiement sur l environnement de Pré-Production...'
+
+                sh '''
+                    echo "Application déployée en Pré-Prod sur le port 8081."
+                '''
             }
         }
 
         stage('6. Validation & Notifications') {
             steps {
                 echo 'En attente de la validation du responsable de production...'
+
                 script {
-                    input message: 'Valider le passage en Production ?', ok: 'Approuver'
+                    input(
+                        message: 'Valider le passage en Production ?',
+                        ok: 'Approuver'
+                    )
                 }
             }
         }
@@ -101,7 +111,10 @@ pipeline {
         stage('7. Déploiement') {
             steps {
                 echo 'Déploiement final en Production...'
-                sh 'docker compose up -d '
+
+                sh '''
+                    docker compose up -d
+                '''
             }
         }
     }
@@ -109,10 +122,23 @@ pipeline {
     post {
         failure {
             echo 'Une étape du pipeline a échoué ! Envoi de la notification e-mail d alerte...'
-            mail to: 'bouraadaoumaima11@gmail.com',
-                 subject: "ALERT: Échec dans le Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                 body: "Attention,\n\nUne erreur est survenue pendant l exécution du pipeline (${env.JOB_NAME} - Build #${env.BUILD_NUMBER}).\n\nConsultez les logs d erreur ici : ${env.BUILD_URL}console"
+
+            mail(
+                to: 'bouraadaoumaima11@gmail.com',
+                subject: "ALERT: Échec dans le Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """Attention,
+
+Une erreur est survenue pendant l exécution du pipeline.
+
+Job : ${env.JOB_NAME}
+Build : #${env.BUILD_NUMBER}
+
+Consultez les logs :
+${env.BUILD_URL}console
+"""
+            )
         }
+
         success {
             echo 'Pipeline exécuté avec succès jusqu à la Production !'
         }
