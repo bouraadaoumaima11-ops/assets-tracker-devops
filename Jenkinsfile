@@ -2,11 +2,12 @@ pipeline {
     agent any
 
     environment {
-        SONAR_SERVER = 'SonarQube'
-        AUTH_SECRET = credentials('assets-auth-secret')
-        CRON_SECRET = credentials('assets-cron-secret')
-        DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
-    }
+    SONAR_SERVER = 'SonarQube'
+    AUTH_SECRET = credentials('assets-auth-secret')
+    CRON_SECRET = credentials('assets-cron-secret')
+    AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
+    DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+}
 
     tools {
         nodejs 'NodeJS-24'
