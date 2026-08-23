@@ -16,14 +16,20 @@ pipeline {
         stage('1. Build') {
             steps {
                 echo 'Récupération du code source et compilation...'
+
                 checkout scm
 
                 sh '''
+                    set -e
+
                     echo "=== Node.js ==="
                     node --version
 
                     echo "=== npm ==="
                     npm --version
+
+                    echo "=== Installation de pnpm compatible avec Node.js 18 ==="
+                    npm install -g pnpm@10
 
                     echo "=== pnpm ==="
                     pnpm --version
@@ -32,6 +38,9 @@ pipeline {
                     test -n "$AUTH_SECRET"
                     test -n "$CRON_SECRET"
                     echo "Les deux secrets sont présents."
+
+                    echo "=== Installation des dépendances ==="
+                    pnpm install --frozen-lockfile
 
                     echo "=== Docker Compose Build ==="
                     docker compose build
@@ -44,6 +53,8 @@ pipeline {
                 echo 'Exécution des tests automatisés...'
 
                 sh '''
+                    set -e
+
                     echo "=== Tests unitaires ==="
                     pnpm test:unit
                 '''
@@ -80,6 +91,8 @@ pipeline {
                 echo 'Audit de sécurité des dépendances externes...'
 
                 sh '''
+                    set -e
+
                     pnpm audit --audit-level=high
                 '''
             }
@@ -90,6 +103,8 @@ pipeline {
                 echo 'Déploiement sur l environnement de Pré-Production...'
 
                 sh '''
+                    set -e
+
                     echo "Application déployée en Pré-Prod sur le port 8081."
                 '''
             }
@@ -113,6 +128,8 @@ pipeline {
                 echo 'Déploiement final en Production...'
 
                 sh '''
+                    set -e
+
                     docker compose up -d
                 '''
             }
