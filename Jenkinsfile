@@ -1,154 +1,155 @@
-```groovy
 pipeline {
-    agent any
+agent any
 
-    environment {
-        SONAR_SERVER = 'SonarQube'
-        AUTH_SECRET = credentials('assets-auth-secret')
-        CRON_SECRET = credentials('assets-cron-secret')
-        DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+```
+environment {
+    SONAR_SERVER = 'SonarQube'
+    AUTH_SECRET = credentials('assets-auth-secret')
+    CRON_SECRET = credentials('assets-cron-secret')
+    DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+}
+
+tools {
+    nodejs 'NodeJS-24'
+}
+
+stages {
+
+    stage('1. Build') {
+        steps {
+            echo 'Récupération du code source et compilation...'
+
+            checkout scm
+
+            sh '''
+                set -e
+
+                echo "========================================="
+                echo "=== Node.js ==="
+                node --version
+
+                echo "=== npm ==="
+                npm --version
+
+                echo "=== Installation de pnpm ==="
+                npm install -g pnpm@11.6.0
+
+                echo "=== pnpm ==="
+                pnpm --version
+
+                echo "=== Vérification des secrets ==="
+                test -n "$AUTH_SECRET"
+                test -n "$CRON_SECRET"
+                echo "Les deux secrets sont présents."
+
+                echo "=== Installation des dépendances ==="
+                pnpm install --frozen-lockfile
+
+                echo "=== Vérification TypeScript ==="
+                pnpm exec tsc --noEmit
+
+                echo "=== Compilation du projet ==="
+                pnpm build
+
+                echo "=== Build terminé avec succès ==="
+                echo "========================================="
+            '''
+        }
     }
 
-    tools {
-        nodejs 'NodeJS-24'
+    stage('2. Tests') {
+        steps {
+            echo 'Exécution des tests automatisés...'
+
+            sh '''
+                set -e
+
+                echo "=== Tests unitaires ==="
+                pnpm test:unit
+            '''
+        }
     }
 
-    stages {
+    stage('3. SonarQube (Pre-Quality, Security & Quality Gate)') {
+        steps {
+            echo 'Analyse du code source avec SonarQube...'
 
-        stage('1. Build') {
-            steps {
-                echo 'Récupération du code source et compilation...'
+            script {
+                def scannerHome = tool 'sonar-scanner'
 
-                checkout scm
-
-                sh '''
-                    set -e
-
-                    echo "========================================="
-                    echo "=== Node.js ==="
-                    node --version
-
-                    echo "=== npm ==="
-                    npm --version
-
-                    echo "=== Installation de pnpm ==="
-                    npm install -g pnpm@11.6.0
-
-                    echo "=== pnpm ==="
-                    pnpm --version
-
-                    echo "=== Vérification des secrets ==="
-                    test -n "$AUTH_SECRET"
-                    test -n "$CRON_SECRET"
-                    echo "Les deux secrets sont présents."
-
-                    echo "=== Installation des dépendances ==="
-                    pnpm install --frozen-lockfile
-
-                    echo "=== Vérification TypeScript ==="
-                    pnpm exec tsc --noEmit
-
-                    echo "=== Compilation du projet ==="
-                    pnpm build
-
-                    echo "=== Build terminé avec succès ==="
-                    echo "========================================="
-                '''
-            }
-        }
-
-        stage('2. Tests') {
-            steps {
-                echo 'Exécution des tests automatisés...'
-
-                sh '''
-                    set -e
-
-                    echo "=== Tests unitaires ==="
-                    pnpm test:unit
-                '''
-            }
-        }
-
-        stage('3. SonarQube (Pre-Quality, Security & Quality Gate)') {
-            steps {
-                echo 'Analyse du code source avec SonarQube...'
-
-                script {
-                    def scannerHome = tool 'sonar-scanner'
-
-                    withSonarQubeEnv("${SONAR_SERVER}") {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                            -Dsonar.projectKey=assets-tracker \
-                            -Dsonar.sources=. \
-                            -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json
-                        """
-                    }
-                }
-
-                echo 'Vérification du Quality Gate...'
-
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                withSonarQubeEnv("${SONAR_SERVER}") {
+                    sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=assets-tracker \
+                        -Dsonar.sources=. \
+                        -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json
+                    """
                 }
             }
-        }
 
-        stage('4. Scan des Dépendances') {
-            steps {
-                echo 'Audit de sécurité des dépendances externes...'
+            echo 'Vérification du Quality Gate...'
 
-                sh '''
-                    set -e
-                    pnpm audit --audit-level=high
-                '''
-            }
-        }
-
-        stage('5. Pré-production') {
-            steps {
-                echo 'Déploiement sur l environnement de Pré-Production...'
-
-                sh '''
-                    echo "Application déployée en Pré-Prod sur le port 8081."
-                '''
-            }
-        }
-
-        stage('6. Validation & Notifications') {
-            steps {
-                echo 'En attente de la validation du responsable de production...'
-
-                script {
-                    input(
-                        message: 'Valider le passage en Production ?',
-                        ok: 'Approuver'
-                    )
-                }
-            }
-        }
-
-        stage('7. Déploiement') {
-            steps {
-                echo 'Déploiement final en Production...'
-
-                sh '''
-                    set -e
-                    docker compose up -d
-                '''
+            timeout(time: 5, unit: 'MINUTES') {
+                waitForQualityGate abortPipeline: true
             }
         }
     }
 
-    post {
-        failure {
-            echo 'Une étape du pipeline a échoué ! Envoi de la notification e-mail d alerte...'
+    stage('4. Scan des Dépendances') {
+        steps {
+            echo 'Audit de sécurité des dépendances externes...'
 
-            mail(
-                to: 'bouraadaoumaima11@gmail.com',
-                subject: "ALERT: Échec dans le Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: """Attention,
+            sh '''
+                set -e
+                pnpm audit --audit-level=high
+            '''
+        }
+    }
+
+    stage('5. Pré-production') {
+        steps {
+            echo 'Déploiement sur l environnement de Pré-Production...'
+
+            sh '''
+                echo "Application déployée en Pré-Prod sur le port 8081."
+            '''
+        }
+    }
+
+    stage('6. Validation & Notifications') {
+        steps {
+            echo 'En attente de la validation du responsable de production...'
+
+            script {
+                input(
+                    message: 'Valider le passage en Production ?',
+                    ok: 'Approuver'
+                )
+            }
+        }
+    }
+
+    stage('7. Déploiement') {
+        steps {
+            echo 'Déploiement final en Production...'
+
+            sh '''
+                set -e
+                docker compose up -d
+            '''
+        }
+    }
+}
+
+post {
+    failure {
+        echo 'Une étape du pipeline a échoué ! Envoi de la notification e-mail d alerte...'
+
+        mail(
+            to: 'bouraadaoumaima11@gmail.com',
+            subject: "ALERT: Échec dans le Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+            body: """Attention,
+```
 
 Une erreur est survenue pendant l exécution du pipeline.
 
@@ -158,12 +159,14 @@ Build : #${env.BUILD_NUMBER}
 Consultez les logs :
 ${env.BUILD_URL}console
 """
-            )
-        }
+)
+}
 
-        success {
-            echo 'Pipeline exécuté avec succès jusqu à la Production !'
-        }
+```
+    success {
+        echo 'Pipeline exécuté avec succès jusqu à la Production !'
     }
 }
 ```
+
+}
