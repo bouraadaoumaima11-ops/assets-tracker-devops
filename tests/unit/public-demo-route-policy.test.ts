@@ -115,27 +115,16 @@ function routeFiles(directory: string): string[] {
   });
 }
 
-function readPolicies(
-  path: string,
-): Record<string, DemoPolicy | undefined> | undefined {
+function readPolicies(path: string): Record<string, DemoPolicy | undefined> | undefined {
   const source = readFileSync(path, "utf8");
   if (!source.includes('from "@/lib/api-handler"')) return undefined;
 
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
   const policies: Record<string, DemoPolicy | undefined> = {};
 
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
-    if (
-      !statement.modifiers?.some(
-        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-      )
-    ) {
+    if (!statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
       continue;
     }
 
@@ -149,10 +138,7 @@ function readPolicies(
 
       const initializer = declaration.initializer;
       if (!initializer || !ts.isCallExpression(initializer)) continue;
-      if (
-        !ts.isIdentifier(initializer.expression) ||
-        initializer.expression.text !== "withAuth"
-      ) {
+      if (!ts.isIdentifier(initializer.expression) || initializer.expression.text !== "withAuth") {
         continue;
       }
 
@@ -165,10 +151,8 @@ function readPolicies(
       const demo = options.properties.find(
         (property): property is ts.PropertyAssignment =>
           ts.isPropertyAssignment(property) &&
-          ((ts.isIdentifier(property.name) &&
-            property.name.text === "demo") ||
-            (ts.isStringLiteral(property.name) &&
-              property.name.text === "demo")),
+          ((ts.isIdentifier(property.name) && property.name.text === "demo") ||
+            (ts.isStringLiteral(property.name) && property.name.text === "demo")),
       );
 
       policies[declaration.name.text] =
@@ -187,21 +171,12 @@ function readMarketDataPolicies(
   const source = readFileSync(path, "utf8");
   if (!source.includes('from "@/lib/api-handler"')) return undefined;
 
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
   const policies: Record<string, MarketDataPolicy | undefined> = {};
 
   for (const statement of sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue;
-    if (
-      !statement.modifiers?.some(
-        (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-      )
-    ) {
+    if (!statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
       continue;
     }
 
@@ -215,10 +190,7 @@ function readMarketDataPolicies(
 
       const initializer = declaration.initializer;
       if (!initializer || !ts.isCallExpression(initializer)) continue;
-      if (
-        !ts.isIdentifier(initializer.expression) ||
-        initializer.expression.text !== "withAuth"
-      ) {
+      if (!ts.isIdentifier(initializer.expression) || initializer.expression.text !== "withAuth") {
         continue;
       }
 
@@ -228,15 +200,12 @@ function readMarketDataPolicies(
       const marketData = options.properties.find(
         (property): property is ts.PropertyAssignment =>
           ts.isPropertyAssignment(property) &&
-          ((ts.isIdentifier(property.name) &&
-            property.name.text === "marketData") ||
-            (ts.isStringLiteral(property.name) &&
-              property.name.text === "marketData")),
+          ((ts.isIdentifier(property.name) && property.name.text === "marketData") ||
+            (ts.isStringLiteral(property.name) && property.name.text === "marketData")),
       );
 
       if (marketData && ts.isStringLiteral(marketData.initializer)) {
-        policies[declaration.name.text] =
-          marketData.initializer.text as MarketDataPolicy;
+        policies[declaration.name.text] = marketData.initializer.text as MarketDataPolicy;
       }
     }
   }
@@ -246,12 +215,7 @@ function readMarketDataPolicies(
 
 function readFunction(path: string, functionName: string): string {
   const source = readFileSync(path, "utf8");
-  const sourceFile = ts.createSourceFile(
-    path,
-    source,
-    ts.ScriptTarget.Latest,
-    true,
-  );
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
   let match: ts.FunctionDeclaration | undefined;
 
   const visit = (node: ts.Node) => {
@@ -274,17 +238,12 @@ describe("public Demo route policy", () => {
   it("declares the exact policy for every withAuth route export", () => {
     const actual = Object.fromEntries(
       routeFiles(join(process.cwd(), "src/app/api"))
-        .map((path) => [
-          relative(process.cwd(), path).replaceAll("\\", "/"),
-          readPolicies(path),
-        ] as const)
-        .filter(
-          (
-            entry,
-          ): entry is readonly [
-            string,
-            Record<string, DemoPolicy | undefined>,
-          ] => Boolean(entry[1]),
+        .map(
+          (path) =>
+            [relative(process.cwd(), path).replaceAll("\\", "/"), readPolicies(path)] as const,
+        )
+        .filter((entry): entry is readonly [string, Record<string, DemoPolicy | undefined>] =>
+          Boolean(entry[1]),
         ),
     );
 
@@ -294,17 +253,15 @@ describe("public Demo route policy", () => {
   it("requires a database refresh credit for every Demo route that performs a live stock lookup", () => {
     const actual = Object.fromEntries(
       routeFiles(join(process.cwd(), "src/app/api"))
-        .map((path) => [
-          relative(process.cwd(), path).replaceAll("\\", "/"),
-          readMarketDataPolicies(path),
-        ] as const)
-        .filter(
-          (
-            entry,
-          ): entry is readonly [
-            string,
-            Record<string, MarketDataPolicy | undefined>,
-          ] => Boolean(entry[1]),
+        .map(
+          (path) =>
+            [
+              relative(process.cwd(), path).replaceAll("\\", "/"),
+              readMarketDataPolicies(path),
+            ] as const,
+        )
+        .filter((entry): entry is readonly [string, Record<string, MarketDataPolicy | undefined>] =>
+          Boolean(entry[1]),
         )
         .filter(([, policies]) => Object.keys(policies).length > 0),
     );
@@ -331,11 +288,7 @@ describe("public Demo route policy", () => {
       "getUnresolvedRatePairs",
       ["accounts:${userId}", "goals:${userId}", "history:${userId}"],
     ],
-    [
-      "src/lib/services/goal-service.ts",
-      "fetchUserGoalsInner",
-      ["goals:${userId}"],
-    ],
+    ["src/lib/services/goal-service.ts", "fetchUserGoalsInner", ["goals:${userId}"]],
     [
       "src/lib/services/history-service.ts",
       "getNormalizedHistory",
@@ -356,11 +309,7 @@ describe("public Demo route policy", () => {
       "getAccountMonthlyCashFlow",
       ["history:${userId}", "accounts:${userId}"],
     ],
-    [
-      "src/lib/services/history-service.ts",
-      "hasForeignCurrencySnapshots",
-      ["history:${userId}"],
-    ],
+    ["src/lib/services/history-service.ts", "hasForeignCurrencySnapshots", ["history:${userId}"]],
     [
       "src/lib/services/net-worth-service.ts",
       "fetchUserAccountsWithHoldingsInner",
@@ -381,16 +330,8 @@ describe("public Demo route policy", () => {
       "getProjectionData",
       ["history:${userId}", "accounts:${userId}"],
     ],
-    [
-      "src/lib/services/settings-service.ts",
-      "findSettings",
-      ["settings:${userId}"],
-    ],
-    [
-      "src/lib/services/stock-watch-service.ts",
-      "getCachedTrackedStocks",
-      ["stocks:${userId}"],
-    ],
+    ["src/lib/services/settings-service.ts", "findSettings", ["settings:${userId}"]],
+    ["src/lib/services/stock-watch-service.ts", "getCachedTrackedStocks", ["stocks:${userId}"]],
     [
       "src/components/dashboard/dashboard-content.tsx",
       "fetchPreviousSnapshotInner",
