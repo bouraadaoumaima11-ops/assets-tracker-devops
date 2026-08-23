@@ -1,12 +1,13 @@
+```groovy
 pipeline {
     agent any
 
     environment {
-    SONAR_SERVER = 'SonarQube'
-    AUTH_SECRET = credentials('assets-auth-secret')
-    CRON_SECRET = credentials('assets-cron-secret')
-    DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
-}
+        SONAR_SERVER = 'SonarQube'
+        AUTH_SECRET = credentials('assets-auth-secret')
+        CRON_SECRET = credentials('assets-cron-secret')
+        DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+    }
 
     tools {
         nodejs 'NodeJS-24'
@@ -31,7 +32,7 @@ pipeline {
                     npm --version
 
                     echo "=== Installation de pnpm ==="
-                    npm install -g pnpm@10.14.0
+                    npm install -g pnpm@11.6.0
 
                     echo "=== pnpm ==="
                     pnpm --version
@@ -43,6 +44,9 @@ pipeline {
 
                     echo "=== Installation des dépendances ==="
                     pnpm install --frozen-lockfile
+
+                    echo "=== Vérification TypeScript ==="
+                    pnpm exec tsc --noEmit
 
                     echo "=== Compilation du projet ==="
                     pnpm build
@@ -162,3 +166,4 @@ ${env.BUILD_URL}console
         }
     }
 }
+```
