@@ -16,12 +16,20 @@ pipeline {
             }
         }
 
-        stage('2. Tests') {
-            steps {
-                echo 'Exécution des tests automatisés...'
-                sh 'echo "Tests unitaires validés avec succès !"'
-            }
-        }
+       stage('2. Tests') {
+    steps {
+        sh '''
+            echo "=== Vérification Node.js ==="
+            node --version
+
+            echo "=== Vérification npm ==="
+            npm --version
+
+            echo "=== Vérification pnpm ==="
+            pnpm --version
+        '''
+    }
+}
 
         stage('3. SonarQube (Pre-Quality, Security & Quality Gate)') {
             steps {
