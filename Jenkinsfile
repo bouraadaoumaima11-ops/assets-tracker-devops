@@ -28,8 +28,8 @@ pipeline {
                     echo "=== npm ==="
                     npm --version
 
-                    echo "=== Installation de pnpm compatible avec Node.js 18 ==="
-                    npm install -g pnpm@10
+                    echo "=== Installation de pnpm compatible avec Node.js 18.1.0 ==="
+                    npm install -g pnpm@8.15.9
 
                     echo "=== pnpm ==="
                     pnpm --version
@@ -54,7 +54,6 @@ pipeline {
 
                 sh '''
                     set -e
-
                     echo "=== Tests unitaires ==="
                     pnpm test:unit
                 '''
@@ -92,7 +91,6 @@ pipeline {
 
                 sh '''
                     set -e
-
                     pnpm audit --audit-level=high
                 '''
             }
@@ -104,7 +102,6 @@ pipeline {
 
                 sh '''
                     set -e
-
                     echo "Application déployée en Pré-Prod sur le port 8081."
                 '''
             }
@@ -129,7 +126,6 @@ pipeline {
 
                 sh '''
                     set -e
-
                     docker compose up -d
                 '''
             }
