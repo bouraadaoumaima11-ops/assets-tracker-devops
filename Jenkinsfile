@@ -2,15 +2,17 @@ pipeline {
     agent any
 
     environment {
-        SONAR_SERVER = 'SonarQube'
-    }
+    SONAR_SERVER = 'SonarQube'
+    AUTH_SECRET = credentials('assets-auth-secret')
+    CRON_SECRET = credentials('assets-cron-secret')
+}
 
     stages {
         stage('1. Build') {
             steps {
                 echo 'Récupération du code source et compilation...'
                 checkout scm
-                sh 'docker compose build || echo "Build réussi !"'
+                sh 'docker compose build '
             }
         }
 
@@ -64,7 +66,7 @@ pipeline {
         stage('7. Déploiement') {
             steps {
                 echo 'Déploiement final en Production...'
-                sh 'docker compose up -d || echo "Application déployée en Production !"'
+                sh 'docker compose up -d '
             }
         }
     }
