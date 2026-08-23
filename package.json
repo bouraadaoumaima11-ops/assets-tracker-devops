@@ -76,6 +76,7 @@
     "@next/env": "^16.2.10",
     "@playwright/test": "^1.52.0",
     "@tailwindcss/postcss": "^4",
+    "@types/chai": "^5.2.3",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
