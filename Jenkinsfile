@@ -8,7 +8,7 @@ pipeline {
     }
 
     tools {
-        nodejs 'NodeJS-18'
+        nodejs 'NodeJS-24'
     }
 
     stages {
@@ -22,15 +22,15 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "======================================"
+                    echo "========================================="
                     echo "=== Node.js ==="
                     node --version
 
                     echo "=== npm ==="
                     npm --version
 
-                    echo "=== Installation de pnpm compatible ==="
-                    npm install -g pnpm@8.15.9
+                    echo "=== Installation de pnpm ==="
+                    npm install -g pnpm@10.14.0
 
                     echo "=== pnpm ==="
                     pnpm --version
@@ -40,17 +40,14 @@ pipeline {
                     test -n "$CRON_SECRET"
                     echo "Les deux secrets sont présents."
 
-                    echo "======================================"
                     echo "=== Installation des dépendances ==="
-                    npm install
+                    pnpm install --frozen-lockfile
 
-                    echo "======================================"
-                    echo "=== Vérification des dépendances ==="
-                    npm list --depth=0 || true
+                    echo "=== Compilation du projet ==="
+                    pnpm build
 
-                    echo "======================================"
-                    echo "=== Docker Compose Build ==="
-                    docker compose build
+                    echo "=== Build terminé avec succès ==="
+                    echo "========================================="
                 '''
             }
         }
@@ -63,13 +60,7 @@ pipeline {
                     set -e
 
                     echo "=== Tests unitaires ==="
-
-                    if npm run | grep -q "test:unit"; then
-                        npm run test:unit
-                    else
-                        echo "Aucun script test:unit trouvé."
-                        echo "Tests unitaires ignorés."
-                    fi
+                    pnpm test:unit
                 '''
             }
         }
@@ -105,12 +96,7 @@ pipeline {
 
                 sh '''
                     set -e
-
-                    echo "=== Audit npm ==="
-
-                    npm audit --audit-level=high || true
-
-                    echo "Audit terminé."
+                    pnpm audit --audit-level=high
                 '''
             }
         }
@@ -144,7 +130,6 @@ pipeline {
 
                 sh '''
                     set -e
-
                     docker compose up -d
                 '''
             }
