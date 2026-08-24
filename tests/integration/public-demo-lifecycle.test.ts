@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+
+process.loadEnvFile?.();
+
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
@@ -16,9 +19,9 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is required for public Demo int
 const parsedDatabaseUrl = new URL(DATABASE_URL);
 if (
   !["localhost", "127.0.0.1"].includes(parsedDatabaseUrl.hostname) ||
-  !parsedDatabaseUrl.pathname.endsWith("_asset_tracker_test")
+  !/^\/(?:[A-Za-z0-9]+_)?asset_tracker_test$/.test(parsedDatabaseUrl.pathname)
 ) {
-  throw new Error("Integration tests require a local *_asset_tracker_test database");
+  throw new Error("Integration tests require a local asset_tracker_test database");
 }
 
 process.env.AUTH_SECRET ??= "public-demo-integration-secret";

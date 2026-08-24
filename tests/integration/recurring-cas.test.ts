@@ -7,9 +7,10 @@ const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is required for recurring CAS integration tests");
 
 const parsedDatabaseUrl = new URL(DATABASE_URL);
+
 if (
   !["localhost", "127.0.0.1"].includes(parsedDatabaseUrl.hostname) ||
-  !parsedDatabaseUrl.pathname.endsWith("_asset_tracker_test")
+  !parsedDatabaseUrl.pathname.endsWith("/asset_tracker_test")
 ) {
   throw new Error("Integration tests require a local *_asset_tracker_test database");
 }

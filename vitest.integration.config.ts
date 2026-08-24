@@ -1,6 +1,8 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
+process.loadEnvFile?.();
+
 process.env.AUTH_SECRET ??= "integration-auth-secret-not-real";
 process.env.CRON_SECRET ??= "integration-cron-secret-not-real";
 
