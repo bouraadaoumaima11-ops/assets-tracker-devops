@@ -2,12 +2,12 @@ pipeline {
     agent any
 
     environment {
-    SONAR_SERVER = 'SonarQube'
-    AUTH_SECRET = credentials('assets-auth-secret')
-    CRON_SECRET = credentials('assets-cron-secret')
-    AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
-    DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
-}
+        SONAR_SERVER = 'SonarQube'
+        AUTH_SECRET = credentials('assets-auth-secret')
+        CRON_SECRET = credentials('assets-cron-secret')
+        AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
+        DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+    }
 
     tools {
         nodejs 'NodeJS-24'
@@ -58,12 +58,24 @@ pipeline {
             steps {
                 echo 'Exécution des tests automatisés...'
 
-                sh '''
-                    set -e
+                timeout(time: 5, unit: 'MINUTES') {
+                    sh '''
+                        set -e
 
-                    echo "=== Tests unitaires ==="
-                    pnpm test:unit
-                '''
+                        echo "========================================="
+                        echo "=== Tests unitaires ==="
+                        echo "=== Node ==="
+                        node --version
+                        echo "=== pnpm ==="
+                        pnpm --version
+
+                        echo "=== Lancement de Vitest ==="
+                        pnpm exec vitest run --reporter=verbose
+
+                        echo "=== Tests terminés avec succès ==="
+                        echo "========================================="
+                    '''
+                }
             }
         }
 
@@ -98,7 +110,11 @@ pipeline {
 
                 sh '''
                     set -e
+
+                    echo "=== Audit des dépendances ==="
                     pnpm audit --audit-level=high
+
+                    echo "=== Audit terminé avec succès ==="
                 '''
             }
         }
@@ -108,6 +124,8 @@ pipeline {
                 echo 'Déploiement sur l environnement de Pré-Production...'
 
                 sh '''
+                    set -e
+
                     echo "Application déployée en Pré-Prod sur le port 8081."
                 '''
             }
@@ -132,7 +150,11 @@ pipeline {
 
                 sh '''
                     set -e
+
+                    echo "=== Déploiement Docker ==="
                     docker compose up -d
+
+                    echo "=== Déploiement terminé avec succès ==="
                 '''
             }
         }
