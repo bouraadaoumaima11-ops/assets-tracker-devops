@@ -104,8 +104,9 @@ ${env.BUILD_URL}console
         }
 
         success {
-            echo 'Pipeline exécutée avec succès jusqu''à la Production.'
+            echo "Pipeline exécutée avec succès jusqu'à la Production."
         }
+        
     }
 }
 
