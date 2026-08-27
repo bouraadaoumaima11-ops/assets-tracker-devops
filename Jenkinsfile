@@ -15,7 +15,7 @@ pipeline {
 
     options {
         timeout(time: 1, unit: 'HOURS') // Prevents jobs hanging forever at the approval stage
-        ansiColor('xterm')
+        
     }
 
     stages {
