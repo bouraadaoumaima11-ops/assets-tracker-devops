@@ -147,3 +147,4 @@ export default withSentryConfig(withBundleAnalyzer(wrappedConfig), {
   // Upload a broader set of source maps for readable browser stack traces.
   widenClientFileUpload: true,
 });
+// update config
