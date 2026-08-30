@@ -15,19 +15,28 @@ pipeline {
 
     stages {
 
-        stage('1. Build') {
-            steps {
-                checkout scm
+      stage('1. Build') {
+    steps {
+        checkout scm
 
-                sh '''
-                    set -e
-                    corepack enable
-                    corepack prepare pnpm@11.6.0 --activate
-                    pnpm install --frozen-lockfile
-                    pnpm build
-                '''
-            }
-        }
+        sh '''
+            set -e
+            
+            # Désactiver Turbopack via env var (la VRAIE façon)
+            export TURBOPACK=0
+            export TURBOPACK_DISABLED=true
+            export NODE_OPTIONS="--max-old-space-size=5120"
+            
+            rm -rf .next dist node_modules/.cache 2>/dev/null || true
+            
+            corepack enable
+            corepack prepare pnpm@11.6.0 --activate
+            pnpm install --frozen-lockfile
+            pnpm build
+        '''
+    }
+}
+
 
         stage('2. Tests') {
             steps {
