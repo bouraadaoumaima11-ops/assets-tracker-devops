@@ -12,7 +12,7 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')  // Timeout 30min pour le build (pas 1h)
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     tools {
@@ -21,20 +21,16 @@ pipeline {
 
     stages {
 
-      stage('1. Build') {
+        stage('1. Build') {
+    options {
+        timeout(time: 15, unit: 'MINUTES')  // Réduire à 15min au lieu de 20
+    }
     steps {
         checkout scm
-
         sh '''
             set -e
-            
-            # Désactiver Turbopack via env var (la VRAIE façon)
-            export TURBOPACK=0
-            export TURBOPACK_DISABLED=true
-            export NODE_OPTIONS="--max-old-space-size=5120"
-            
+            export NODE_OPTIONS="--max-old-space-size=7168"
             rm -rf .next dist node_modules/.cache 2>/dev/null || true
-            
             corepack enable
             corepack prepare pnpm@11.6.0 --activate
             pnpm install --frozen-lockfile
@@ -42,7 +38,6 @@ pipeline {
         '''
     }
 }
-
 
         stage('2. Tests') {
             options {
@@ -83,7 +78,7 @@ pipeline {
                 }
 
                 timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: false  // Ne pas bloquer
+                    waitForQualityGate abortPipeline: false
                 }
             }
         }
@@ -145,7 +140,7 @@ pipeline {
 
     post {
         failure {
-            mail(
+            emailext (
                 to: 'bouraadaoumaima11@gmail.com',
                 subject: "🔴 ALERT: Échec du Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """Une erreur est survenue dans le pipeline.
@@ -163,7 +158,7 @@ Veuillez consulter les logs pour plus de détails.
         }
 
         success {
-            mail(
+            emailext (
                 to: 'bouraadaoumaima11@gmail.com',
                 subject: "✅ SUCCÈS: Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """Pipeline exécutée avec succès jusqu'à la Production!
@@ -180,6 +175,5 @@ Bravo! Votre application a été déployée avec succès.
             echo "✅ PIPELINE COMPLÈTEMENT RÉUSSIE!"
             echo "=========================================="
         }
-        
     }
 }
