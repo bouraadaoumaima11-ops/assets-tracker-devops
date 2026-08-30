@@ -67,7 +67,6 @@ const nextConfig: NextConfig = {
     remotePatterns: [{ protocol: "https", hostname: "lh3.googleusercontent.com" }],
   },
   experimental: {
-    turbopack: false,
     viewTransition: true,
     optimizePackageImports: [
       "recharts",
