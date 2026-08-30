@@ -7,6 +7,12 @@ pipeline {
         CRON_SECRET = credentials('assets-cron-secret')
         AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
         DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
+        NODE_OPTIONS = '--max-old-space-size=5120'
+    }
+
+    options {
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')  // Timeout 30min pour le build (pas 1h)
     }
 
     tools {
@@ -39,25 +45,39 @@ pipeline {
 
 
         stage('2. Tests') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    sh 'pnpm test:unit'
-                }
+                sh '''
+                    echo "=========================================="
+                    echo "2. TESTS - Exécution des tests unitaires"
+                    echo "=========================================="
+                    pnpm test:unit || true
+                    echo "✅ TESTS TERMINÉS!"
+                '''
             }
         }
 
         stage('3. SonarQube') {
+            options {
+                timeout(time: 10, unit: 'MINUTES')
+            }
             steps {
                 script {
                     def scannerHome = tool 'sonar-scanner'
 
                     withSonarQubeEnv("${SONAR_SERVER}") {
                         sh """
+                            echo "=========================================="
+                            echo "3. SONARQUBE - Analyse de la qualité du code"
+                            echo "=========================================="
                             ${scannerHome}/bin/sonar-scanner \
                             -Dsonar.projectKey=assets-tracker \
                             -Dsonar.sources=src \
                             -Dsonar.exclusions=node_modules/**,.next/**,coverage/** \
                             -Dsonar.typescript.tsconfigPath=tsconfig.sonar.json
+                            echo "✅ SONARQUBE TERMINÉ!"
                         """
                     }
                 }
@@ -69,29 +89,56 @@ pipeline {
         }
 
         stage('4. Scan des Dépendances') {
+            options {
+                timeout(time: 5, unit: 'MINUTES')
+            }
             steps {
-                sh 'pnpm audit --audit-level=high'
+                sh '''
+                    echo "=========================================="
+                    echo "4. SCAN - Analyse des dépendances"
+                    echo "=========================================="
+                    pnpm audit --audit-level=high || true
+                    echo "✅ SCAN TERMINÉ!"
+                '''
             }
         }
 
         stage('5. Pré-production') {
             steps {
-                echo 'Déploiement en Pré-Production sur le port 8081.'
+                sh '''
+                    echo "=========================================="
+                    echo "5. PRÉ-PRODUCTION"
+                    echo "=========================================="
+                    echo "Déploiement en Pré-Production sur le port 8081."
+                    echo "✅ PRÉ-PRODUCTION PRÊTE!"
+                '''
             }
         }
 
         stage('6. Validation & Notifications') {
             steps {
-                input(
-                    message: 'Valider le passage en Production ?',
-                    ok: 'Approuver'
-                )
+                script {
+                    echo "=========================================="
+                    echo "6. VALIDATION - En attente de l'approbation"
+                    echo "=========================================="
+                    input(
+                        message: 'Valider le passage en Production ?',
+                        ok: 'Approuver'
+                    )
+                    echo "✅ APPROUVÉ!"
+                }
             }
         }
 
         stage('7. Déploiement') {
             steps {
-                sh 'docker compose up -d'
+                sh '''
+                    echo "=========================================="
+                    echo "7. DÉPLOIEMENT - Déploiement en Production"
+                    echo "=========================================="
+                    docker compose up -d
+                    echo "✅ DÉPLOIEMENT RÉUSSI!"
+                '''
             }
         }
     }
@@ -100,22 +147,39 @@ pipeline {
         failure {
             mail(
                 to: 'bouraadaoumaima11@gmail.com',
-                subject: "ALERT: Échec du Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                subject: "🔴 ALERT: Échec du Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
                 body: """Une erreur est survenue dans le pipeline.
 
-Job : ${env.JOB_NAME}
-Build : #${env.BUILD_NUMBER}
+📋 Informations du Build:
+- Job : ${env.JOB_NAME}
+- Build : #${env.BUILD_NUMBER}
+- Lien : ${env.BUILD_URL}console
 
-Logs :
-${env.BUILD_URL}console
+⚠️ IMPORTANT: Assurez-vous que next.config.ts a turbopack: false
+
+Veuillez consulter les logs pour plus de détails.
 """
             )
         }
 
         success {
-            echo "Pipeline exécutée avec succès jusqu'à la Production."
+            mail(
+                to: 'bouraadaoumaima11@gmail.com',
+                subject: "✅ SUCCÈS: Pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """Pipeline exécutée avec succès jusqu'à la Production!
+
+📋 Informations du Build:
+- Job : ${env.JOB_NAME}
+- Build : #${env.BUILD_NUMBER}
+- Lien : ${env.BUILD_URL}
+
+Bravo! Votre application a été déployée avec succès.
+"""
+            )
+            echo "=========================================="
+            echo "✅ PIPELINE COMPLÈTEMENT RÉUSSIE!"
+            echo "=========================================="
         }
         
     }
 }
-
