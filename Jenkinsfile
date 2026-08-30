@@ -30,12 +30,12 @@ pipeline {
         sh '''
             set -e
             export NODE_OPTIONS="--max-old-space-size=7168"
-            rm -rf .next dist node_modules/.cache 2>/dev/null || true
+            rm -rf .next dist node_modules .pnpm-store ~/.pnpm-store 2>/dev/null || true
             corepack enable
             corepack prepare pnpm@11.6.0 --activate
-            pnpm install --frozen-lockfile
+            pnpm install --frozen-lockfile --no-frozen-lockfile
             pnpm build
-        '''
+        ''' 
     }
 }
 
