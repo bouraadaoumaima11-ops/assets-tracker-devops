@@ -23,22 +23,29 @@ pipeline {
         stage('1. Build') {
             options {
                 timeout(time: 40, unit: 'MINUTES')
-            }
-            steps {
-                checkout scm
-                sh '''
-                    echo "=========================================="
-                    echo "STAGE 1: BUILD"
-                    echo "=========================================="
-                    
-                    echo "Installation des dépendances..."
-                    npm install --legacy-peer-deps
-                    
-                    echo "Build de l'application..."
-                    npm run build 2>/dev/null || echo "Build skippé"
-                    
-                    echo "✅ STAGE 1 BUILD - RÉUSSI"
-                '''
+        }
+        steps {
+            checkout scm
+            sh '''
+               echo "=========================================="
+               echo "STAGE 1: BUILD"
+               echo "=========================================="
+            
+               # Nettoyer complètement
+               echo "Nettoyage complet..."
+               rm -rf node_modules package-lock.json ~/.npm 2>/dev/null || true
+               npm cache clean --force
+            
+               # Installer
+               echo "Installation des dépendances..."
+               npm install
+            
+               # Build
+               echo "Build de l'application..."
+               npm run build 2>/dev/null || echo "Build skippé"
+            
+               echo "✅ STAGE 1 BUILD - RÉUSSI"
+            '''
             }
         }
 
