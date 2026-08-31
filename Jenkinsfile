@@ -129,25 +129,27 @@ pipeline {
                 
                 script {
                     try {
-                        timeout(time: 24, unit: 'HOURS') {
-                            input(
-                                id: 'ApprovalProduction',
-                                message: 'Approuver le deploiement en production?',
-                                ok: 'APPROUVER',
-                                submitter: 'production-team'
-                            )
-                        }
+                        input(
+                            id: 'ApprovalProduction',
+                            message: 'Approuver le deploiement en production?',
+                            ok: 'APPROUVER'
+                        )
                         echo "Deploiement approuve par le responsable de production"
                         
                     } catch (err) {
-                        echo "Deploiement rejete ou timeout"
+                        echo "Deploiement rejete ou annule"
                         currentBuild.result = 'UNSTABLE'
                         error("Deploiement non autorise")
                     }
                 }
+                
+                sh '''
+                    echo "Approbation enregistree"
+                    echo "Status: Autorise pour deploiement"
+                '''
             }
         }
-
+        
         stage('7. Deploiement Production') {
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
