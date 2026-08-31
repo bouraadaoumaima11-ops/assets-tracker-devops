@@ -15,14 +15,20 @@ pipeline {
 
     options {
         timestamps()
-        // Pas de timeout global ici : il ne doit pas englober l'attente d'approbation.
-        // Chaque stage automatisé a son propre timeout de 10 min ci-dessous.
+        timeout(time: 12, unit: 'MINUTES')
+    }
+
+    parameters {
+        choice(
+            name: 'DEPLOY_PRODUCTION',
+            choices: ['NON', 'OUI'],
+            description: 'Autoriser le déploiement en production ?'
+        )
     }
 
     stages {
 
         stage('1. Build') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 1: BUILD"
@@ -31,51 +37,62 @@ pipeline {
                 checkout scm
 
                 sh '''
+                    set -e
+
                     echo "Verification de la structure du projet..."
-                    ls -la package.json 2>/dev/null || echo "Projet valide"
+                    ls -la package.json
+
+                    echo "Version Node.js:"
+                    node --version
+
+                    echo "Version npm:"
+                    npm --version
 
                     echo "Installation des dependances..."
-                    npm install --legacy-peer-deps 2>/dev/null || echo "Installation complete"
+                    npm install --legacy-peer-deps
 
                     echo "Application: Assets Tracker"
                     echo "Database: ${DATABASE_URL}"
                     echo "Auth Secret: Active"
                     echo "Cron Secret: Active"
+
                     echo "BUILD - SUCCES"
                 '''
             }
         }
 
         stage('2. Tests') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 2: TESTS"
                 echo "=========================================="
 
                 sh '''
+                    set -e
+
                     echo "Execution des tests..."
-                    npm test -- --passWithNoTests 2>/dev/null || echo "Tests complets"
+
+                    npm test -- --passWithNoTests
+
                     echo "TESTS - SUCCES"
                 '''
             }
         }
 
         stage('3. SonarQube - Analyse Qualite') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 3: SONARQUBE - Pre-Quality, Security, Quality Gate"
+                echo "STAGE 3: SONARQUBE"
                 echo "=========================================="
 
                 sh '''
-                    echo "Analyse Pre-Quality: Verifier la structure du code..."
+                    echo "Analyse Pre-Quality..."
                     echo "- Complexite cyclomatique: OK"
                     echo "- Standards de codage: OK"
                     echo "- Duplication de code: OK"
 
                     echo ""
-                    echo "Analyse Security: Scanner les vulnerabilites..."
+                    echo "Analyse Security..."
                     echo "- Injection SQL: OK"
                     echo "- XSS: OK"
                     echo "- CSRF: OK"
@@ -92,22 +109,22 @@ pipeline {
         }
 
         stage('4. Scan Dependances') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 4: SCAN DEPENDANCES - Securite"
+                echo "STAGE 4: SCAN DEPENDANCES"
                 echo "=========================================="
 
                 sh '''
                     echo "Audit de securite npm..."
-                    npm audit --audit-level=high 2>/dev/null || echo "Audit complet"
+
+                    npm audit --audit-level=high || true
+
                     echo "SCAN DEPENDANCES - SUCCES"
                 '''
             }
         }
 
         stage('5. Pre-production') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 5: PRE-PRODUCTION"
@@ -121,54 +138,55 @@ pipeline {
                     echo "Auth Secret: Configured"
                     echo "Cron Secret: Configured"
                     echo "Auth Self Host Password: Configured"
+
                     echo "Status: Pret pour deploiement"
                     echo "PRE-PRODUCTION - SUCCES"
                 '''
             }
         }
 
-        stage('6. Validation et Approbation Production') {
+        stage('6. Validation') {
             steps {
                 echo "=========================================="
-                echo "STAGE 6: VALIDATION - Approbation Production"
+                echo "STAGE 6: VALIDATION"
                 echo "=========================================="
 
                 script {
-                    try {
-                        timeout(time: 15, unit: 'MINUTES') {
-                            def approver = input(
-                                id: 'ApprovalProduction',
-                                message: 'Approuver le deploiement en production?',
-                                ok: 'APPROUVER',
-                                submitterParameter: 'APPROVER_NAME'
-                            )
-                            echo "Deploiement approuve par: ${env.APPROVER_NAME}"
-                        }
-                    } catch (err) {
-                        echo "Deploiement rejete, annule, ou delai depasse"
-                        currentBuild.result = 'UNSTABLE'
-                        error("Deploiement non autorise: ${err}")
+                    if (params.DEPLOY_PRODUCTION == 'OUI') {
+
+                        echo "=========================================="
+                        echo "DEPLOIEMENT PRODUCTION AUTORISE"
+                        echo "=========================================="
+
+                    } else {
+
+                        echo "=========================================="
+                        echo "DEPLOIEMENT PRODUCTION REFUSE"
+                        echo "=========================================="
+                        echo "Le pipeline s'arrete avant la production."
+
+                        currentBuild.result = 'ABORTED'
+                        error("Deploiement en production non autorise.")
                     }
                 }
-
-                sh '''
-                    echo "Approbation enregistree"
-                    echo "Status: Autorise pour deploiement"
-                '''
             }
         }
 
         stage('7. Deploiement Production') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             when {
-                expression { currentBuild.result != 'UNSTABLE' }
+                expression {
+                    params.DEPLOY_PRODUCTION == 'OUI'
+                }
             }
+
             steps {
                 echo "=========================================="
                 echo "STAGE 7: DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
 
                 sh '''
+                    set -e
+
                     echo "Deploiement en production..."
                     echo "Application: Assets Tracker"
                     echo "Build: ${BUILD_NUMBER}"
@@ -177,33 +195,43 @@ pipeline {
                     echo "Auth Secret: Active"
                     echo "Cron Secret: Active"
                     echo "Auth Self Host Password: Active"
+
                     echo "Status: Deploye et operationnel"
                     echo "DEPLOIEMENT - SUCCES"
                 '''
             }
         }
-
     }
 
     post {
+
         failure {
             echo "=========================================="
-            echo "Pipeline ECHOUE"
+            echo "PIPELINE ECHOUE"
             echo "=========================================="
-            echo "Notification email envoyee au responsable de production"
+
             echo "Build: ${BUILD_NUMBER}"
             echo "URL: ${BUILD_URL}console"
         }
 
         success {
             echo "=========================================="
-            echo "Pipeline SUCCES - Tous les stages completees"
+            echo "PIPELINE SUCCES"
             echo "=========================================="
+
+            echo "Tous les stages sont completes"
             echo "Build: ${BUILD_NUMBER}"
-            echo "Application: Assets Tracker - Deployee en production"
-            echo "Database: Configuree et active"
-            echo "Secrets: Configures et actifs"
-            echo "Status: Complet et operationnel"
+            echo "Application: Assets Tracker"
+            echo "Status: Deploye en production"
+        }
+
+        aborted {
+            echo "=========================================="
+            echo "PIPELINE ARRETE"
+            echo "=========================================="
+
+            echo "Le deploiement en production n'a pas ete autorise."
+            echo "Build: ${BUILD_NUMBER}"
         }
     }
 }
