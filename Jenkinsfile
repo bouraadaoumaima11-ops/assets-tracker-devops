@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        booleanParam(
+            name: 'APPROUVER_DEPLOIEMENT',
+            defaultValue: false,
+            description: 'Cocher pour autoriser le deploiement en production'
+        )
+    }
+
     environment {
         AUTH_SECRET = credentials('assets-auth-secret')
         CRON_SECRET = credentials('assets-cron-secret')
@@ -15,14 +23,12 @@ pipeline {
 
     options {
         timestamps()
-        // Pas de timeout global ici : il ne doit pas englober l'attente d'approbation.
-        // Chaque stage automatisé a son propre timeout de 10 min ci-dessous.
+        timeout(time: 12, unit: 'MINUTES')   // <-- limite pour TOUT le pipeline
     }
 
     stages {
 
         stage('1. Build') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 1: BUILD"
@@ -47,7 +53,6 @@ pipeline {
         }
 
         stage('2. Tests') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 2: TESTS"
@@ -62,7 +67,6 @@ pipeline {
         }
 
         stage('3. SonarQube - Analyse Qualite') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 3: SONARQUBE - Pre-Quality, Security, Quality Gate"
@@ -92,7 +96,6 @@ pipeline {
         }
 
         stage('4. Scan Dependances') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 4: SCAN DEPENDANCES - Securite"
@@ -107,7 +110,6 @@ pipeline {
         }
 
         stage('5. Pre-production') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 5: PRE-PRODUCTION"
@@ -134,32 +136,20 @@ pipeline {
                 echo "=========================================="
 
                 script {
-                    try {
-                        timeout(time: 15, unit: 'MINUTES') {
-                            def approver = input(
-                                id: 'ApprovalProduction',
-                                message: 'Approuver le deploiement en production?',
-                                ok: 'APPROUVER',
-                                submitterParameter: 'APPROVER_NAME'
-                            )
-                            echo "Deploiement approuve par: ${env.APPROVER_NAME}"
-                        }
-                    } catch (err) {
-                        echo "Deploiement rejete, annule, ou delai depasse"
+                    if (!params.APPROUVER_DEPLOIEMENT) {
                         currentBuild.result = 'UNSTABLE'
-                        error("Deploiement non autorise: ${err}")
+                        error("Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee au lancement du build")
                     }
                 }
 
                 sh '''
-                    echo "Approbation enregistree"
+                    echo "Approbation enregistree via parametre de lancement"
                     echo "Status: Autorise pour deploiement"
                 '''
             }
         }
 
         stage('7. Deploiement Production') {
-            options { timeout(time: 10, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
