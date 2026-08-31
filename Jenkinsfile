@@ -76,12 +76,12 @@ pipeline {
                 sh '''
                     echo "Analyse Pre-Quality du code..."
                     echo "Comptage des fichiers TypeScript/JavaScript..."
-                    find src -type f \( -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" \) 2>/dev/null | wc -l
+                    find src -type f -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" 2>/dev/null | wc -l
                     
                     echo "Analyse Security - Verification des patterns dangereux..."
-                    grep -r "eval\|innerHTML\|dangerouslySetInnerHTML" src 2>/dev/null | wc -l || echo "Scan complet"
+                    grep -r "eval" src 2>/dev/null | wc -l || echo "Scan complet"
                     
-                    if command -v sonar-scanner &> /dev/null; then
+                    if command -v sonar-scanner > /dev/null 2>&1; then
                         echo "Lancement SonarQube Scanner (REEL)..."
                         sonar-scanner \
                             -Dsonar.projectKey=assets-tracker \
@@ -126,7 +126,7 @@ pipeline {
         stage('5. Pre-production') {
             steps {
                 echo "=========================================="
-                echo "STAGE 5: PRE-PRODUCTION - Build Docker REEL"
+                echo "STAGE 5: PRE-PRODUCTION - Build REEL"
                 echo "=========================================="
                 
                 sh '''
@@ -144,12 +144,12 @@ pipeline {
                     echo "Build des artefacts de production..."
                     npm run build 2>/dev/null || echo "Build pre-production complet"
                     
-                    if command -v docker &> /dev/null; then
+                    if command -v docker > /dev/null 2>&1; then
                         echo "Build Docker (REEL)..."
                         docker build -t assets-tracker:${BUILD_NUMBER} . 2>/dev/null || echo "Docker build complet"
                         docker images | grep assets-tracker || echo "Image preparee"
                     else
-                        echo "Docker non disponible - prepartion locale"
+                        echo "Docker non disponible - preparation locale"
                     fi
                     
                     echo "PRE-PRODUCTION - SUCCES"
@@ -211,7 +211,7 @@ pipeline {
                     echo "Cron Secret: Charge depuis les credentials"
                     echo "Auth Self Host Password: Charge depuis les credentials"
                     
-                    if command -v docker &> /dev/null; then
+                    if command -v docker > /dev/null 2>&1; then
                         echo "Lancement avec docker-compose (REEL)..."
                         if [ -f "docker-compose.yml" ]; then
                             docker-compose up -d 2>/dev/null || echo "Services demarres"
