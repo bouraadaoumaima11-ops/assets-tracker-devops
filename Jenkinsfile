@@ -16,6 +16,7 @@ pipeline {
         DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
         NODE_OPTIONS = '--max-old-space-size=7168'
         NPM_CONFIG_CACHE = '/var/jenkins_home/.npm-cache-shared'
+        NEXT_TELEMETRY_DISABLED = '1'
     }
 
     tools {
@@ -28,11 +29,11 @@ pipeline {
 
     stages {
 
-        stage('1. Build') {
+        stage('1a. Installation Dependances') {
             options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 1: BUILD"
+                echo "STAGE 1a: INSTALLATION DES DEPENDANCES"
                 echo "=========================================="
 
                 checkout scm
@@ -44,11 +45,33 @@ pipeline {
                     echo "Installation des dependances..."
                     npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
 
+                    echo "INSTALLATION - SUCCES"
+                '''
+            }
+        }
+
+        stage('1b. Build Application') {
+            options { timeout(time: 20, unit: 'MINUTES') }
+            steps {
+                echo "=========================================="
+                echo "STAGE 1b: BUILD APPLICATION"
+                echo "=========================================="
+
+                sh '''
                     echo "Generation du client Prisma..."
                     npx prisma generate
 
+                    echo "Restauration du cache Next.js si disponible..."
+                    mkdir -p /var/jenkins_home/.next-cache-shared
+                    mkdir -p .next
+                    cp -r /var/jenkins_home/.next-cache-shared .next/cache 2>/dev/null || true
+
                     echo "Build de l'application Next.js..."
                     npm run build
+
+                    echo "Sauvegarde du cache Next.js pour le prochain build..."
+                    mkdir -p /var/jenkins_home/.next-cache-shared
+                    cp -r .next/cache/* /var/jenkins_home/.next-cache-shared/ 2>/dev/null || true
 
                     echo "BUILD - SUCCES"
                 '''
