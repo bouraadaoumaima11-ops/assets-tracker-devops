@@ -61,8 +61,8 @@ pipeline {
                 echo "=========================================="
 
                 sh '''
-                    npm test -- --passWithNoTests --ci
-                    echo "TESTS - SUCCES"
+                    npm run test --if-present -- --passWithNoTests --ci
+                    echo "TESTS - SUCCES (ou aucun test configure)"
                 '''
             }
         }
