@@ -15,6 +15,7 @@ pipeline {
         AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
         DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
         NODE_OPTIONS = '--max-old-space-size=7168'
+        NPM_CONFIG_CACHE = '/var/jenkins_home/.npm-cache-shared'
     }
 
     tools {
@@ -23,12 +24,12 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 20, unit: 'MINUTES')
     }
 
     stages {
 
         stage('1. Build') {
+            options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 1: BUILD"
@@ -37,8 +38,15 @@ pipeline {
                 checkout scm
 
                 sh '''
+                    echo "Diagnostic cache npm..."
+                    npm config get cache
+                    du -sh $(npm config get cache) 2>/dev/null || echo "Cache vide ou inexistant"
+
+                    echo "Test vitesse reseau npm..."
+                    time curl -o /dev/null -s -w "%{time_total}s\\n" https://registry.npmjs.org/react
+
                     echo "Installation des dependances..."
-                    npm install --legacy-peer-deps
+                    npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
 
                     echo "Generation du client Prisma..."
                     npx prisma generate
@@ -52,6 +60,7 @@ pipeline {
         }
 
         stage('2. Tests') {
+            options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 2: TESTS"
@@ -66,6 +75,7 @@ pipeline {
         }
 
         stage('3. SonarQube - Analyse Qualite') {
+            options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 3: SONARQUBE - Analyse de code"
@@ -82,6 +92,7 @@ pipeline {
         }
 
         stage('4. Scan Dependances') {
+            options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 4: SCAN DEPENDANCES - Securite"
@@ -98,6 +109,7 @@ pipeline {
         }
 
         stage('5. Pre-production') {
+            options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 5: PRE-PRODUCTION"
@@ -132,6 +144,7 @@ pipeline {
         }
 
         stage('7. Deploiement Production') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
