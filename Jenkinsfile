@@ -43,7 +43,10 @@ pipeline {
                     du -sh $(npm config get cache) 2>/dev/null || echo "Cache vide ou inexistant"
 
                     echo "Test vitesse reseau npm..."
-                    time curl -o /dev/null -s -w "%{time_total}s\\n" https://registry.npmjs.org/react
+                    START=$(date +%s)
+                    curl -o /dev/null -s https://registry.npmjs.org/react
+                    END=$(date +%s)
+                    echo "Temps requete registre npm: $((END-START)) secondes"
 
                     echo "Installation des dependances..."
                     npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
