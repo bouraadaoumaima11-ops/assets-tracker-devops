@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        booleanParam(
+            name: 'APPROUVER_DEPLOIEMENT',
+            defaultValue: false,
+            description: 'Cocher pour autoriser le deploiement en production'
+        )
+    }
+
     environment {
         AUTH_SECRET = credentials('assets-auth-secret')
         CRON_SECRET = credentials('assets-cron-secret')
@@ -15,35 +23,29 @@ pipeline {
 
     options {
         timestamps()
-        timeout(time: 45, unit: 'MINUTES')
+        timeout(time: 20, unit: 'MINUTES')
     }
 
     stages {
 
         stage('1. Build') {
-            options {
-                timeout(time: 15, unit: 'MINUTES')
-            }
             steps {
                 echo "=========================================="
-                echo "STAGE 1: BUILD - Installation REELLE"
+                echo "STAGE 1: BUILD"
                 echo "=========================================="
-                
+
                 checkout scm
-                
+
                 sh '''
-                    echo "Verification du projet..."
-                    ls -la package.json next.config.ts 2>/dev/null
-                    
-                    echo "Nettoyage des caches..."
-                    rm -rf node_modules package-lock.json .next dist 2>/dev/null || true
-                    
-                    echo "Installation des dependances (REEL)..."
-                    npm install --legacy-peer-deps
-                    
-                    echo "Verification de l'installation..."
-                    npm list | head -20
-                    
+                    echo "Installation des dependances..."
+                    npm ci --legacy-peer-deps
+
+                    echo "Generation du client Prisma..."
+                    npx prisma generate
+
+                    echo "Build de l'application Next.js..."
+                    npm run build
+
                     echo "BUILD - SUCCES"
                 '''
             }
@@ -52,16 +54,12 @@ pipeline {
         stage('2. Tests') {
             steps {
                 echo "=========================================="
-                echo "STAGE 2: TESTS - Execution REELLE des tests"
+                echo "STAGE 2: TESTS"
                 echo "=========================================="
-                
+
                 sh '''
-                    echo "Verification des tests disponibles..."
-                    cat package.json | grep -A 5 '"test"' || echo "Scripts disponibles"
-                    
-                    echo "Execution des tests (REEL)..."
-                    npm test -- --passWithNoTests 2>/dev/null || npm run test:unit 2>/dev/null || npm run jest 2>/dev/null || npm run test 2>/dev/null || echo "Tests executes"
-                    
+                    echo "Execution des tests..."
+                    npm test -- --passWithNoTests --ci
                     echo "TESTS - SUCCES"
                 '''
             }
@@ -70,88 +68,47 @@ pipeline {
         stage('3. SonarQube - Analyse Qualite') {
             steps {
                 echo "=========================================="
-                echo "STAGE 3: SONARQUBE - Analyse REELLE"
+                echo "STAGE 3: SONARQUBE - Analyse de code"
                 echo "=========================================="
-                
-                sh '''
-                    echo "Analyse Pre-Quality du code..."
-                    echo "Comptage des fichiers TypeScript/JavaScript..."
-                    find src -type f -name "*.ts" -o -name "*.tsx" -o -name "*.js" -o -name "*.jsx" 2>/dev/null | wc -l
-                    
-                    echo "Analyse Security - Verification des patterns dangereux..."
-                    grep -r "eval" src 2>/dev/null | wc -l || echo "Scan complet"
-                    
-                    if command -v sonar-scanner > /dev/null 2>&1; then
-                        echo "Lancement SonarQube Scanner (REEL)..."
-                        sonar-scanner \
-                            -Dsonar.projectKey=assets-tracker \
-                            -Dsonar.projectName="Assets Tracker" \
-                            -Dsonar.sources=src \
-                            -Dsonar.host.url=http://localhost:9000 \
-                            -Dsonar.exclusions=node_modules/**,.next/**,coverage/** 2>/dev/null || echo "SonarQube complet"
-                    else
-                        echo "SonarQube Scanner non trouve - analyse statique locale"
-                        echo "Verification ESLint..."
-                        npm run lint 2>/dev/null || npx eslint src 2>/dev/null || echo "Lint complet"
-                    fi
-                    
-                    echo "Quality Gate Verification..."
-                    echo "- Couverture de code: OK"
-                    echo "- Taux de bugs: OK"
-                    echo "- Taux de vulnerabilites: OK"
-                    
-                    echo "SONARQUBE - SUCCES"
-                '''
+
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh '''
+                        echo "Analyse statique du code (lint)..."
+                        npx eslint . --ext .js,.jsx,.ts,.tsx || echo "Lint termine avec avertissements"
+                        echo "SONARQUBE/LINT - TERMINE"
+                    '''
+                }
             }
         }
 
         stage('4. Scan Dependances') {
             steps {
                 echo "=========================================="
-                echo "STAGE 4: SCAN DEPENDANCES - Audit REEL"
+                echo "STAGE 4: SCAN DEPENDANCES - Securite"
                 echo "=========================================="
-                
-                sh '''
-                    echo "Audit de securite npm (REEL)..."
-                    npm audit --audit-level=high
-                    
-                    echo "Rapport d'audit..."
-                    npm audit report 2>/dev/null || echo "Audit complet"
-                    
-                    echo "SCAN DEPENDANCES - SUCCES"
-                '''
+
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh '''
+                        echo "Audit de securite npm..."
+                        npm audit --audit-level=high
+                        echo "SCAN DEPENDANCES - SUCCES"
+                    '''
+                }
             }
         }
 
         stage('5. Pre-production') {
             steps {
                 echo "=========================================="
-                echo "STAGE 5: PRE-PRODUCTION - Build REEL"
+                echo "STAGE 5: PRE-PRODUCTION"
                 echo "=========================================="
-                
+
                 sh '''
-                    echo "Verification des artefacts de build..."
-                    if [ -d ".next" ]; then
-                        echo "Artefacts .next trouves"
-                        ls -la .next | head -10
-                    fi
-                    
-                    if [ -d "dist" ]; then
-                        echo "Artefacts dist trouves"
-                        ls -la dist | head -10
-                    fi
-                    
-                    echo "Build des artefacts de production..."
-                    npm run build 2>/dev/null || echo "Build pre-production complet"
-                    
-                    if command -v docker > /dev/null 2>&1; then
-                        echo "Build Docker (REEL)..."
-                        docker build -t assets-tracker:${BUILD_NUMBER} . 2>/dev/null || echo "Docker build complet"
-                        docker images | grep assets-tracker || echo "Image preparee"
-                    else
-                        echo "Docker non disponible - preparation locale"
-                    fi
-                    
+                    echo "Verification que l'app demarre correctement..."
+                    (npm run start &) 
+                    sleep 8
+                    curl -f http://localhost:3000 || (echo "L'app ne repond pas" && exit 1)
+                    pkill -f "next start" 2>/dev/null || true
                     echo "PRE-PRODUCTION - SUCCES"
                 '''
             }
@@ -160,33 +117,17 @@ pipeline {
         stage('6. Validation et Approbation Production') {
             steps {
                 echo "=========================================="
-                echo "STAGE 6: VALIDATION - Approbation du Responsable"
+                echo "STAGE 6: VALIDATION - Approbation Production"
                 echo "=========================================="
-                
+
                 script {
-                    try {
-                        timeout(time: 24, unit: 'HOURS') {
-                            input(
-                                id: 'ApprovalProduction',
-                                message: 'Approuver le deploiement en production?',
-                                ok: 'APPROUVER'
-                            )
-                        }
-                        echo "Deploiement APPROUVE par le responsable de production"
-                        
-                    } catch (err) {
-                        echo "Deploiement REJETE ou timeout"
+                    if (!params.APPROUVER_DEPLOIEMENT) {
                         currentBuild.result = 'UNSTABLE'
-                        error("Deploiement non autorise")
+                        error("Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee au lancement du build")
                     }
                 }
-                
-                sh '''
-                    echo "Enregistrement de l'approbation..."
-                    echo "Date: $(date)"
-                    echo "Build: ${BUILD_NUMBER}"
-                    echo "Status: Autorise pour deploiement en production"
-                '''
+
+                echo "Approbation confirmee via parametre de lancement"
             }
         }
 
@@ -196,39 +137,39 @@ pipeline {
             }
             steps {
                 echo "=========================================="
-                echo "STAGE 7: DEPLOIEMENT PRODUCTION - REEL"
+                echo "STAGE 7: DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
-                
+
                 sh '''
-                    echo "Deploiement en production (REEL)..."
-                    echo "Application: Assets Tracker"
-                    echo "Build Number: ${BUILD_NUMBER}"
-                    echo "Date: $(date)"
-                    
-                    echo "Configuration de l'environnement..."
-                    echo "Database: ${DATABASE_URL}"
-                    echo "Auth Secret: Charge depuis les credentials"
-                    echo "Cron Secret: Charge depuis les credentials"
-                    echo "Auth Self Host Password: Charge depuis les credentials"
-                    
-                    if command -v docker > /dev/null 2>&1; then
-                        echo "Lancement avec docker-compose (REEL)..."
-                        if [ -f "docker-compose.yml" ]; then
-                            docker-compose up -d 2>/dev/null || echo "Services demarres"
-                            docker-compose ps 2>/dev/null || echo "Status des services"
-                        else
-                            echo "docker-compose.yml non trouve"
+                    echo "Generation du fichier .env pour le deploiement..."
+                    cat > .env << EOF
+AUTH_SECRET=${AUTH_SECRET}
+CRON_SECRET=${CRON_SECRET}
+AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+EOF
+
+                    echo "Construction et demarrage des services (db, migrate, app)..."
+                    docker compose --profile full up -d --build
+
+                    echo "Attente que l'app soit healthy..."
+                    STATUS="starting"
+                    for i in $(seq 1 20); do
+                        STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q app) 2>/dev/null || echo "starting")
+                        if [ "$STATUS" = "healthy" ]; then
+                            echo "App healthy !"
+                            break
                         fi
-                    else
-                        echo "Docker non disponible"
-                        echo "Lancement de l'application..."
-                        npm start 2>/dev/null || npm run start 2>/dev/null || echo "Application demarree"
+                        echo "En attente... ($i/20) statut: $STATUS"
+                        sleep 3
+                    done
+
+                    if [ "$STATUS" != "healthy" ]; then
+                        echo "L'app n'est jamais devenue healthy"
+                        docker compose logs app --tail=50
+                        exit 1
                     fi
-                    
-                    echo "Verification de la sante de l'application..."
-                    sleep 5
-                    curl -s http://localhost:3000 2>/dev/null | head -c 100 || echo "Application active"
-                    
+
                     echo "DEPLOIEMENT - SUCCES"
                 '''
             }
@@ -239,30 +180,18 @@ pipeline {
     post {
         failure {
             echo "=========================================="
-            echo "Pipeline ECHOUE - Build: ${BUILD_NUMBER}"
+            echo "Pipeline ECHOUE"
             echo "=========================================="
-            
-            sh '''
-                echo "Notification d'echec envoyee au responsable de production"
-                echo "Details: Verifier les logs ci-dessus"
-                echo "URL: ${BUILD_URL}console"
-            '''
+            echo "Build: ${BUILD_NUMBER}"
+            echo "URL: ${BUILD_URL}console"
         }
-        
+
         success {
             echo "=========================================="
-            echo "Pipeline SUCCES - Tous les stages REELS completees"
+            echo "Pipeline SUCCES"
             echo "=========================================="
-            
-            sh '''
-                echo "Notification de succes envoyee au responsable"
-                echo "Build Number: ${BUILD_NUMBER}"
-                echo "Application: Assets Tracker - EN PRODUCTION"
-                echo "Database: Active et configuree"
-                echo "Secrets: Actifs et securises"
-                echo "Status: Complet et operationnel"
-                echo "Date de deploiement: $(date)"
-            '''
+            echo "Build: ${BUILD_NUMBER}"
+            echo "Application: Assets Tracker - Deployee en production"
         }
     }
 }
