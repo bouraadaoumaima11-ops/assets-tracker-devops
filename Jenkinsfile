@@ -38,7 +38,7 @@ pipeline {
 
                 sh '''
                     echo "Installation des dependances..."
-                    npm ci --legacy-peer-deps
+                    npm install --legacy-peer-deps
 
                     echo "Generation du client Prisma..."
                     npx prisma generate
@@ -105,7 +105,7 @@ pipeline {
 
                 sh '''
                     echo "Verification que l'app demarre correctement..."
-                    (npm run start &) 
+                    (npm run start &)
                     sleep 8
                     curl -f http://localhost:3000 || (echo "L'app ne repond pas" && exit 1)
                     pkill -f "next start" 2>/dev/null || true
