@@ -17,6 +17,8 @@ pipeline {
         NODE_OPTIONS = '--max-old-space-size=7168'
         NPM_CONFIG_CACHE = '/var/jenkins_home/.npm-cache-shared'
         NEXT_TELEMETRY_DISABLED = '1'
+        DOCKER_BUILDKIT = '1'
+        COMPOSE_DOCKER_CLI_BUILD = '1'
     }
 
     tools {
@@ -29,53 +31,24 @@ pipeline {
 
     stages {
 
-        stage('1a. Installation Dependances') {
-            options { timeout(time: 25, unit: 'MINUTES') }
+        stage('1. Installation (pour tests/lint)') {
+            options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 1a: INSTALLATION DES DEPENDANCES"
+                echo "STAGE 1: INSTALLATION"
                 echo "=========================================="
 
                 checkout scm
 
                 sh '''
-                    echo "Tentative d'installation incrementale..."
+                    echo "Installation des dependances (pour tests et lint seulement)..."
                     if ! npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline \
                         --fetch-retries=5 --fetch-retry-mintimeout=20000; then
                         echo "Echec, nettoyage complet et nouvel essai..."
                         rm -rf node_modules
-                        npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline \
-                            --fetch-retries=5 --fetch-retry-mintimeout=20000
+                        npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
                     fi
                     echo "INSTALLATION - SUCCES"
-                '''
-            }
-        }
-
-        stage('1b. Build Application') {
-            options { timeout(time: 20, unit: 'MINUTES') }
-            steps {
-                echo "=========================================="
-                echo "STAGE 1b: BUILD APPLICATION"
-                echo "=========================================="
-
-                sh '''
-                    echo "Generation du client Prisma..."
-                    npx prisma generate
-
-                    echo "Restauration du cache Next.js si disponible..."
-                    mkdir -p /var/jenkins_home/.next-cache-shared
-                    mkdir -p .next
-                    cp -r /var/jenkins_home/.next-cache-shared .next/cache 2>/dev/null || true
-
-                    echo "Build de l'application Next.js..."
-                    npm run build
-
-                    echo "Sauvegarde du cache Next.js pour le prochain build..."
-                    mkdir -p /var/jenkins_home/.next-cache-shared
-                    cp -r .next/cache/* /var/jenkins_home/.next-cache-shared/ 2>/dev/null || true
-
-                    echo "BUILD - SUCCES"
                 '''
             }
         }
@@ -88,7 +61,6 @@ pipeline {
                 echo "=========================================="
 
                 sh '''
-                    echo "Execution des tests..."
                     npm test -- --passWithNoTests --ci
                     echo "TESTS - SUCCES"
                 '''
@@ -104,7 +76,6 @@ pipeline {
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        echo "Analyse statique du code (lint)..."
                         npx eslint . --ext .js,.jsx,.ts,.tsx || echo "Lint termine avec avertissements"
                         echo "SONARQUBE/LINT - TERMINE"
                     '''
@@ -121,7 +92,6 @@ pipeline {
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        echo "Audit de securite npm..."
                         npm audit --audit-level=high
                         echo "SCAN DEPENDANCES - SUCCES"
                     '''
@@ -129,28 +99,10 @@ pipeline {
             }
         }
 
-        stage('5. Pre-production') {
-            options { timeout(time: 5, unit: 'MINUTES') }
+        stage('5. Validation et Approbation Production') {
             steps {
                 echo "=========================================="
-                echo "STAGE 5: PRE-PRODUCTION"
-                echo "=========================================="
-
-                sh '''
-                    echo "Verification que l'app demarre correctement..."
-                    (npm run start &)
-                    sleep 8
-                    curl -f http://localhost:3000 || (echo "L'app ne repond pas" && exit 1)
-                    pkill -f "next start" 2>/dev/null || true
-                    echo "PRE-PRODUCTION - SUCCES"
-                '''
-            }
-        }
-
-        stage('6. Validation et Approbation Production') {
-            steps {
-                echo "=========================================="
-                echo "STAGE 6: VALIDATION - Approbation Production"
+                echo "STAGE 5: VALIDATION - Approbation Production"
                 echo "=========================================="
 
                 script {
@@ -164,14 +116,14 @@ pipeline {
             }
         }
 
-        stage('7. Deploiement Production') {
-            options { timeout(time: 10, unit: 'MINUTES') }
+        stage('6. Deploiement Production (build + run Docker)') {
+            options { timeout(time: 20, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
             steps {
                 echo "=========================================="
-                echo "STAGE 7: DEPLOIEMENT PRODUCTION"
+                echo "STAGE 6: DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
 
                 sh '''
@@ -183,8 +135,9 @@ AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 EOF
 
-                    echo "Construction et demarrage des services (db, migrate, app)..."
-                    docker compose --profile full up -d --build
+                    echo "Construction (avec cache Docker layers) et demarrage des services..."
+                    docker compose --profile full build
+                    docker compose --profile full up -d
 
                     echo "Attente que l'app soit healthy..."
                     STATUS="starting"
