@@ -30,7 +30,7 @@ pipeline {
     stages {
 
         stage('1a. Installation Dependances') {
-            options { timeout(time: 15, unit: 'MINUTES') }
+            options { timeout(time: 25, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "STAGE 1a: INSTALLATION DES DEPENDANCES"
@@ -39,12 +39,14 @@ pipeline {
                 checkout scm
 
                 sh '''
-                    echo "Nettoyage des installations precedentes..."
-                    rm -rf node_modules
-
-                    echo "Installation des dependances..."
-                    npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
-
+                    echo "Tentative d'installation incrementale..."
+                    if ! npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline \
+                        --fetch-retries=5 --fetch-retry-mintimeout=20000; then
+                        echo "Echec, nettoyage complet et nouvel essai..."
+                        rm -rf node_modules
+                        npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline \
+                            --fetch-retries=5 --fetch-retry-mintimeout=20000
+                    fi
                     echo "INSTALLATION - SUCCES"
                 '''
             }
