@@ -20,6 +20,8 @@ pipeline {
         DOCKER_BUILDKIT = '1'
         COMPOSE_DOCKER_CLI_BUILD = '1'
         DOCKER_HOST = 'tcp://host.docker.internal:2375'
+        DOCKER_CLIENT_TIMEOUT = '300'
+        COMPOSE_HTTP_TIMEOUT = '300'
     }
 
     tools {
@@ -118,7 +120,7 @@ pipeline {
         }
 
         stage('6. Deploiement Production (build + run Docker)') {
-            options { timeout(time: 20, unit: 'MINUTES') }
+            options { timeout(time: 30, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
@@ -136,7 +138,7 @@ AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 EOF
 
-                    echo "Construction (avec cache Docker layers) et demarrage des services..."
+                    echo "Construction (avec cache Docker layer) et demarrage des services..."
                     docker compose --profile full build
                     docker compose --profile full up -d
 
