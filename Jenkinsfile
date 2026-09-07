@@ -19,9 +19,7 @@ pipeline {
         NEXT_TELEMETRY_DISABLED = '1'
         DOCKER_BUILDKIT = '1'
         COMPOSE_DOCKER_CLI_BUILD = '1'
-        DOCKER_HOST = 'tcp://host.docker.internal:2375'
-        DOCKER_CLIENT_TIMEOUT = '300'
-        COMPOSE_HTTP_TIMEOUT = '300'
+    
     }
 
     tools {
