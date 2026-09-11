@@ -14,12 +14,11 @@ pipeline {
         CRON_SECRET = credentials('assets-cron-secret')
         AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
         DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
-        NODE_OPTIONS = '--max-old-space-size=7168'
+        NODE_OPTIONS = '--max-old-space-size=8192'
         NPM_CONFIG_CACHE = '/var/jenkins_home/.npm-cache-shared'
         NEXT_TELEMETRY_DISABLED = '1'
         DOCKER_BUILDKIT = '1'
         COMPOSE_DOCKER_CLI_BUILD = '1'
-    
     }
 
     tools {
@@ -36,7 +35,7 @@ pipeline {
             options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 1: INSTALLATION"
+                echo "ETAPE 1 : INSTALLATION"
                 echo "=========================================="
 
                 checkout scm
@@ -49,7 +48,7 @@ pipeline {
                         rm -rf node_modules
                         npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
                     fi
-                    echo "INSTALLATION - SUCCES"
+                    echo "✅ INSTALLATION - SUCCES"
                 '''
             }
         }
@@ -58,62 +57,68 @@ pipeline {
             options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 2: TESTS"
+                echo "ETAPE 2 : TESTS"
                 echo "=========================================="
 
                 sh '''
                     npm run test --if-present -- --passWithNoTests --ci
-                    echo "TESTS - SUCCES (ou aucun test configure)"
+                    echo "✅ TESTS - SUCCES (ou aucun test configure)"
                 '''
             }
         }
 
-        stage('3. SonarQube - Analyse Qualite') {
+        stage('3. Lint - Qualite Code') {
             options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "STAGE 3: SONARQUBE - Analyse de code"
+                echo "ETAPE 3 : LINT - Qualite du code"
                 echo "=========================================="
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        npx eslint . --ext .js,.jsx,.ts,.tsx || echo "Lint termine avec avertissements"
-                        echo "SONARQUBE/LINT - TERMINE"
+                        npx eslint . --ext .js,.jsx,.ts,.tsx || echo "⚠️ Lint termine avec avertissements"
+                        echo "✅ LINT - TERMINE"
                     '''
                 }
             }
         }
 
         stage('4. Scan Dependances - Securite') {
+            options { timeout(time: 10, unit: 'MINUTES') }
             steps {
-               sh '''
+                echo "=========================================="
+                echo "ETAPE 4 : SCAN DEPENDANCES - Securite"
+                echo "=========================================="
+
+                sh '''
+                    echo "🔍 Verification des vulnerabilites..."
                     if npm audit --audit-level=high > /dev/null 2>&1; then
-                       echo "✅ Aucune vulnerabilite critique"
+                        echo "✅ Aucune vulnerabilite critique detectee"
                     else
-                       echo "⚠️ Vulnerabilites trouvees - Correction automatique..."
-                       npm audit fix --force || true
-                       echo "✅ Vulnerabilites corrigees"
+                        echo "⚠️ Vulnerabilites trouvees - Correction automatique..."
+                        npm audit fix --force || true
+                        echo "✅ Vulnerabilites corrigees"
                     fi
+                    
                     echo "✅ ANALYSE DES DEPENDANCES - SUCCES"
                 '''
             }
         }
-        
 
         stage('5. Validation et Approbation Production') {
             steps {
                 echo "=========================================="
-                echo "STAGE 5: VALIDATION - Approbation Production"
+                echo "ETAPE 5 : VALIDATION - Approbation Production"
                 echo "=========================================="
 
                 script {
                     if (!params.APPROUVER_DEPLOIEMENT) {
                         currentBuild.result = 'UNSTABLE'
-                        error("Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee au lancement du build")
+                        error("❌ Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee")
                     }
                 }
 
-                echo "Approbation confirmee via parametre de lancement"
+                echo "✅ Approbation confirmee via parametre de lancement"
             }
         }
 
@@ -124,7 +129,7 @@ pipeline {
             }
             steps {
                 echo "=========================================="
-                echo "ETAPE 6: DEPLOIEMENT PRODUCTION"
+                echo "ETAPE 6 : DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
 
                 sh '''
@@ -132,7 +137,7 @@ pipeline {
                     
                     echo "🔧 Verification des permissions Docker..."
                     if ! docker ps > /dev/null 2>&1; then
-                        echo "⚠️  Permission Docker insuffisante - Correction..."
+                        echo "⚠️ Permission Docker insuffisante - Correction..."
                         chmod 666 /var/run/docker.sock || sudo chmod 666 /var/run/docker.sock || true
                         echo "✅ Permissions corrigees"
                     else
@@ -182,21 +187,38 @@ EOF
                 '''
             }
         }
+
+    }
+
     post {
         failure {
             echo "=========================================="
-            echo "Pipeline ECHOUE"
+            echo "❌ PIPELINE ECHOUE"
             echo "=========================================="
             echo "Build: ${BUILD_NUMBER}"
             echo "URL: ${BUILD_URL}console"
+            echo ""
+            echo "Actions recommandees:"
+            echo "1. Verifier les permissions Docker"
+            echo "2. Verifier les logs ci-dessus"
+            echo "3. Relancer le build"
         }
 
         success {
             echo "=========================================="
-            echo "Pipeline SUCCES"
+            echo "✅ PIPELINE SUCCES"
             echo "=========================================="
             echo "Build: ${BUILD_NUMBER}"
             echo "Application: Assets Tracker - Deployee en production"
+            echo "URL: ${BUILD_URL}"
+        }
+
+        always {
+            sh '''
+                echo ""
+                echo "📊 Etat final des services:"
+                docker compose ps || true
+            '''
         }
     }
 }
