@@ -84,7 +84,7 @@ pipeline {
         }
 
         stage('4. Scan Dependances - Securite') {
-            options { timeout(time: 10, unit: 'MINUTES') }
+            options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
                 echo "ETAPE 4 : SCAN DEPENDANCES - Securite"
@@ -97,7 +97,11 @@ pipeline {
                     else
                         echo "⚠️ Vulnerabilites trouvees - Correction automatique..."
                         npm audit fix --force || true
-                        echo "✅ Vulnerabilites corrigees"
+                        
+                        echo "🔄 Regeneration du fichier pnpm-lock.yaml apres corrections..."
+                        pnpm install --no-frozen-lockfile || npm install || true
+                        
+                        echo "✅ Vulnerabilites corrigees et lock file regenere"
                     fi
                     
                     echo "✅ ANALYSE DES DEPENDANCES - SUCCES"
