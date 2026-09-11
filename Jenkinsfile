@@ -95,13 +95,10 @@ pipeline {
                     if npm audit --audit-level=high > /dev/null 2>&1; then
                         echo "✅ Aucune vulnerabilite critique detectee"
                     else
-                        echo "⚠️ Vulnerabilites trouvees - Correction automatique..."
-                        npm audit fix --force || true
-                        
-                        echo "🔄 Regeneration du fichier pnpm-lock.yaml apres corrections..."
-                        pnpm install --no-frozen-lockfile || npm install || true
-                        
-                        echo "✅ Vulnerabilites corrigees et lock file regenere"
+                        echo "⚠️ Vulnerabilites trouvees - Mise a jour"
+                        echo "NOTE: npm update sans --force pour eviter downgrade Prisma"
+                        npm update || true
+                        echo "✅ Dependances mises a jour"
                     fi
                     
                     echo "✅ ANALYSE DES DEPENDANCES - SUCCES"
