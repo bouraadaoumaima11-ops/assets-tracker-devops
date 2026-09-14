@@ -13,6 +13,7 @@ import { getTranslations, getMessages } from "next-intl/server";
 import { NextIntlClientProvider } from "next-intl";
 import { pickMessages } from "@/lib/i18n-utils";
 import { LargeTitleHeading } from "@/components/layout/large-title-heading";
+import { connection } from "next/server";
 
 const CLIENT_NAMESPACES = [
   "settings",
@@ -25,6 +26,7 @@ const CLIENT_NAMESPACES = [
 ];
 
 async function SettingsContent() {
+  await connection();
   const session = await getSession();
   if (!session?.user?.id) return null;
   const userId = session.user.id;
