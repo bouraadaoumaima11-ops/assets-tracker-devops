@@ -91,7 +91,7 @@ RUN --mount=type=cache,id=next-build-cache-$CACHE_SCOPE-$TARGETPLATFORM,target=/
   if [ -z "$NEXT_PUBLIC_SENTRY_DSN" ]; then unset NEXT_PUBLIC_SENTRY_DSN; fi; \
   ( while true; do sleep 20; echo "[heartbeat] build en cours..."; done ) & \
   HEARTBEAT_PID=$!; \
-  pnpm build; \
+  timeout 600 pnpm build; \
   BUILD_EXIT=$?; \
   kill $HEARTBEAT_PID 2>/dev/null; \
   exit $BUILD_EXIT \
