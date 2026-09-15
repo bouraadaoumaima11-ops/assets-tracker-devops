@@ -14,7 +14,7 @@ pipeline {
         CRON_SECRET = credentials('assets-cron-secret')
         AUTH_SELF_HOST_PASSWORD = credentials('assets-auth-self-host-password')
         DATABASE_URL = 'postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable'
-        NODE_OPTIONS = '--max-old-space-size=8192'
+        NODE_OPTIONS = '--max-old-space-size=3072'
         NPM_CONFIG_CACHE = '/var/jenkins_home/.npm-cache-shared'
         NEXT_TELEMETRY_DISABLED = '1'
         DOCKER_BUILDKIT = '1'
