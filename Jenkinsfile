@@ -157,7 +157,8 @@ EOF
                     echo "✅ Fichier .env cree"
 
                     echo "🐳 Construction (avec cache Docker layer) et demarrage des services..."
-                    docker compose --profile full build
+                    docker compose --profile full build migrate
+                    docker compose --profile full build app
                     docker compose --profile full up -d
                     echo "✅ Services demarres"
 
