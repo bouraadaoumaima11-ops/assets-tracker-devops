@@ -153,6 +153,7 @@ AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 DATABASE_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
 DIRECT_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
+POSTGRES_PORT=5434
 EOF
                     echo "✅ Fichier .env cree"
 
