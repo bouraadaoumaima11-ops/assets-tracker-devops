@@ -53,11 +53,46 @@ pipeline {
             }
         }
 
-        stage('2. Tests') {
+        stage('2. Docker Build (Verifier construction image)') {
+            options { timeout(time: 60, unit: 'MINUTES') }
+            steps {
+                echo "=========================================="
+                echo "ETAPE 2 : DOCKER BUILD - Construction des images"
+                echo "=========================================="
+
+                sh '''
+                    echo "🐳 Construction des images Docker..."
+                    
+                    echo "📝 Generation du fichier .env pour le build..."
+                    cat > .env << EOF
+AUTH_SECRET=${AUTH_SECRET}
+CRON_SECRET=${CRON_SECRET}
+AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+DATABASE_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
+DIRECT_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
+POSTGRES_PORT=5434
+EOF
+                    echo "✅ Fichier .env cree"
+
+                    echo "🏗️ Construction image migrate..."
+                    docker compose --profile full build migrate
+                    echo "✅ Image migrate construite"
+
+                    echo "🏗️ Construction image app..."
+                    docker compose --profile full build app
+                    echo "✅ Image app construite"
+
+                    echo "✅ DOCKER BUILD - SUCCES"
+                '''
+            }
+        }
+
+        stage('3. Tests') {
             options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "ETAPE 2 : TESTS"
+                echo "ETAPE 3 : TESTS"
                 echo "=========================================="
 
                 sh '''
@@ -67,11 +102,11 @@ pipeline {
             }
         }
 
-        stage('3. Lint - Qualite Code') {
+        stage('4. Lint - Qualite Code') {
             options { timeout(time: 5, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "ETAPE 3 : LINT - Qualite du code"
+                echo "ETAPE 4 : LINT - Qualite du code"
                 echo "=========================================="
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
@@ -83,11 +118,11 @@ pipeline {
             }
         }
 
-        stage('4. Scan Dependances - Securite') {
+        stage('5. Scan Dependances - Securite') {
             options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "ETAPE 4 : SCAN DEPENDANCES - Securite"
+                echo "ETAPE 5 : SCAN DEPENDANCES - Securite"
                 echo "=========================================="
 
                 sh '''
@@ -106,10 +141,10 @@ pipeline {
             }
         }
 
-        stage('5. Validation et Approbation Production') {
+        stage('6. Validation et Approbation Production') {
             steps {
                 echo "=========================================="
-                echo "ETAPE 5 : VALIDATION - Approbation Production"
+                echo "ETAPE 6 : VALIDATION - Approbation Production"
                 echo "=========================================="
 
                 script {
@@ -123,14 +158,14 @@ pipeline {
             }
         }
 
-        stage('6. Deploiement Production (build + run Docker)') {
+        stage('7. Deploiement Production (run containers)') {
             options { timeout(time: 30, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
             steps {
                 echo "=========================================="
-                echo "ETAPE 6 : DEPLOIEMENT PRODUCTION"
+                echo "ETAPE 7 : DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
 
                 sh '''
@@ -145,21 +180,7 @@ pipeline {
                         echo "✅ Permissions Docker OK"
                     fi
                     
-                    echo "📝 Generation du fichier .env pour le deploiement..."
-                    cat > .env << EOF
-AUTH_SECRET=${AUTH_SECRET}
-CRON_SECRET=${CRON_SECRET}
-AUTH_SELF_HOST_PASSWORD=${AUTH_SELF_HOST_PASSWORD}
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-DATABASE_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
-DIRECT_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
-POSTGRES_PORT=5434
-EOF
-                    echo "✅ Fichier .env cree"
-
-                    echo "🐳 Construction (avec cache Docker layer) et demarrage des services..."
-                    docker compose --profile full build migrate
-                    docker compose --profile full build app
+                    echo "🚀 Demarrage des services..."
                     docker compose --profile full up -d
                     echo "✅ Services demarres"
 
@@ -204,8 +225,8 @@ EOF
             echo "URL: ${BUILD_URL}console"
             echo ""
             echo "Actions recommandees:"
-            echo "1. Verifier les permissions Docker"
-            echo "2. Verifier les logs ci-dessus"
+            echo "1. Verifier les logs ci-dessus"
+            echo "2. Corriger le probleme"
             echo "3. Relancer le build"
         }
 
