@@ -62,7 +62,7 @@ pipeline {
 
                 sh '''
                     echo "🐳 Construction des images Docker..."
-                    
+
                     echo "📝 Generation du fichier .env pour le build..."
                     cat > .env << EOF
 AUTH_SECRET=${AUTH_SECRET}
@@ -118,11 +118,52 @@ EOF
             }
         }
 
-        stage('5. Scan Dependances - Securite') {
+        stage('5. Analyse Sonarqube - Qualite et Securite') {
+            options { timeout(time: 10, unit: 'MINUTES') }
+            steps {
+                echo "=========================================="
+                echo "ETAPE 5 : ANALYSE SONARQUBE"
+                echo "=========================================="
+
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withSonarQubeEnv('SonarQube') {
+                        sh '''
+                            npx sonar-scanner \
+                                -Dsonar.projectKey=assets-tracker \
+                                -Dsonar.sources=src \
+                                -Dsonar.exclusions=**/node_modules/**,**/*.test.ts,**/*.test.tsx \
+                                -Dsonar.tests=src \
+                                -Dsonar.test.inclusions=**/*.test.ts,**/*.test.tsx
+                        '''
+                    }
+                    echo "✅ ANALYSE SONARQUBE - TERMINEE"
+                }
+            }
+        }
+
+        stage('6. Quality Gate Sonarqube') {
+            options { timeout(time: 5, unit: 'MINUTES') }
+            steps {
+                script {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                        timeout(time: 5, unit: 'MINUTES') {
+                            def qg = waitForQualityGate()
+                            if (qg.status != 'OK') {
+                                echo "⚠️ Quality Gate: ${qg.status} - pipeline continue quand meme"
+                            } else {
+                                echo "✅ Quality Gate: OK"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('7. Scan Dependances - Securite') {
             options { timeout(time: 15, unit: 'MINUTES') }
             steps {
                 echo "=========================================="
-                echo "ETAPE 5 : SCAN DEPENDANCES - Securite"
+                echo "ETAPE 7 : SCAN DEPENDANCES - Securite"
                 echo "=========================================="
 
                 sh '''
@@ -135,16 +176,16 @@ EOF
                         npm update || true
                         echo "✅ Dependances mises a jour"
                     fi
-                    
+
                     echo "✅ ANALYSE DES DEPENDANCES - SUCCES"
                 '''
             }
         }
 
-        stage('6. Validation et Approbation Production') {
+        stage('8. Validation et Approbation Production') {
             steps {
                 echo "=========================================="
-                echo "ETAPE 6 : VALIDATION - Approbation Production"
+                echo "ETAPE 8 : VALIDATION - Approbation Production"
                 echo "=========================================="
 
                 script {
@@ -158,28 +199,27 @@ EOF
             }
         }
 
-        stage('7. Deploiement Production (run containers)') {
+        stage('9. Deploiement Production (run containers)') {
             options { timeout(time: 30, unit: 'MINUTES') }
             when {
                 expression { currentBuild.result != 'UNSTABLE' }
             }
             steps {
                 echo "=========================================="
-                echo "ETAPE 7 : DEPLOIEMENT PRODUCTION"
+                echo "ETAPE 9 : DEPLOIEMENT PRODUCTION"
                 echo "=========================================="
 
                 sh '''
                     set -e
-                    
+
                     echo "🔧 Verification des permissions Docker..."
                     if ! docker ps > /dev/null 2>&1; then
-                        echo "⚠️ Permission Docker insuffisante - Correction..."
-                        chmod 666 /var/run/docker.sock || sudo chmod 666 /var/run/docker.sock || true
-                        echo "✅ Permissions corrigees"
+                        echo "❌ Docker inaccessible"
+                        exit 1
                     else
                         echo "✅ Permissions Docker OK"
                     fi
-                    
+
                     echo "🚀 Demarrage des services..."
                     docker compose --profile full up -d
                     echo "✅ Services demarres"
@@ -188,15 +228,15 @@ EOF
                     STATUS="starting"
                     COUNTER=0
                     MAX_RETRIES=30
-                    
+
                     while [ $COUNTER -lt $MAX_RETRIES ]; do
                         STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q app) 2>/dev/null || echo "starting")
-                        
+
                         if [ "$STATUS" = "healthy" ]; then
                             echo "✅ App healthy! - Deploy reussi"
                             break
                         fi
-                        
+
                         echo "   En attente... ($((COUNTER+1))/$MAX_RETRIES) - Statut: $STATUS"
                         sleep 2
                         COUNTER=$((COUNTER + 1))
