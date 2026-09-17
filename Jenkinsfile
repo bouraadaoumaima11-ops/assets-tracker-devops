@@ -48,7 +48,7 @@ pipeline {
                         rm -rf node_modules
                         npm install --legacy-peer-deps --no-audit --no-fund --prefer-offline
                     fi
-                    echo "✅ INSTALLATION - SUCCES"
+                    echo "INSTALLATION - SUCCES"
                 '''
             }
         }
@@ -61,9 +61,9 @@ pipeline {
                 echo "=========================================="
 
                 sh '''
-                    echo "🐳 Construction des images Docker..."
+                    echo "Construction des images Docker..."
 
-                    echo "📝 Generation du fichier .env pour le build..."
+                    echo "Generation du fichier .env pour le build..."
                     cat > .env << EOF
 AUTH_SECRET=${AUTH_SECRET}
 CRON_SECRET=${CRON_SECRET}
@@ -73,17 +73,17 @@ DATABASE_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
 DIRECT_URL=postgresql://postgres:postgres@db:5432/asset_app?sslmode=disable
 POSTGRES_PORT=5434
 EOF
-                    echo "✅ Fichier .env cree"
+                    echo "Fichier .env cree"
 
-                    echo "🏗️ Construction image migrate..."
+                    echo "Construction image migrate..."
                     docker compose --profile full build migrate
-                    echo "✅ Image migrate construite"
+                    echo "Image migrate construite"
 
-                    echo "🏗️ Construction image app..."
+                    echo "Construction image app..."
                     docker compose --profile full build app
-                    echo "✅ Image app construite"
+                    echo "Image app construite"
 
-                    echo "✅ DOCKER BUILD - SUCCES"
+                    echo "DOCKER BUILD - SUCCES"
                 '''
             }
         }
@@ -97,7 +97,7 @@ EOF
 
                 sh '''
                     npm run test --if-present -- --passWithNoTests --ci
-                    echo "✅ TESTS - SUCCES (ou aucun test configure)"
+                    echo "TESTS - SUCCES (ou aucun test configure)"
                 '''
             }
         }
@@ -111,8 +111,8 @@ EOF
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh '''
-                        npx eslint . --ext .js,.jsx,.ts,.tsx || echo "⚠️ Lint termine avec avertissements"
-                        echo "✅ LINT - TERMINE"
+                        npx eslint . --ext .js,.jsx,.ts,.tsx || echo "Lint termine avec avertissements"
+                        echo "LINT - TERMINE"
                     '''
                 }
             }
@@ -126,6 +126,34 @@ EOF
                 echo "=========================================="
 
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh '''
+                        echo "Demarrage de Sonarqube pour l'analyse..."
+                        docker start sonarqube
+
+                        echo "Attente que Sonarqube soit pret..."
+                        STATUS="starting"
+                        COUNTER=0
+                        MAX_RETRIES=40
+
+                        while [ $COUNTER -lt $MAX_RETRIES ]; do
+                            STATUS=$(docker inspect --format='{{.State.Health.Status}}' sonarqube 2>/dev/null || echo "starting")
+
+                            if [ "$STATUS" = "healthy" ]; then
+                                echo "Sonarqube pret"
+                                break
+                            fi
+
+                            echo "En attente de Sonarqube... ($((COUNTER+1))/$MAX_RETRIES) - Statut: $STATUS"
+                            sleep 3
+                            COUNTER=$((COUNTER + 1))
+                        done
+
+                        if [ "$STATUS" != "healthy" ]; then
+                            echo "Sonarqube n'a pas demarre a temps, analyse annulee"
+                            exit 1
+                        fi
+                    '''
+
                     withSonarQubeEnv('SonarQube') {
                         sh '''
                             npx sonar-scanner \
@@ -136,7 +164,8 @@ EOF
                                 -Dsonar.test.inclusions=**/*.test.ts,**/*.test.tsx
                         '''
                     }
-                    echo "✅ ANALYSE SONARQUBE - TERMINEE"
+
+                    echo "ANALYSE SONARQUBE - TERMINEE"
                 }
             }
         }
@@ -149,13 +178,18 @@ EOF
                         timeout(time: 5, unit: 'MINUTES') {
                             def qg = waitForQualityGate()
                             if (qg.status != 'OK') {
-                                echo "⚠️ Quality Gate: ${qg.status} - pipeline continue quand meme"
+                                echo "Quality Gate: ${qg.status} - pipeline continue quand meme"
                             } else {
-                                echo "✅ Quality Gate: OK"
+                                echo "Quality Gate: OK"
                             }
                         }
                     }
                 }
+
+                sh '''
+                    echo "Arret de Sonarqube pour liberer la memoire..."
+                    docker stop sonarqube || true
+                '''
             }
         }
 
@@ -167,17 +201,17 @@ EOF
                 echo "=========================================="
 
                 sh '''
-                    echo "🔍 Verification des vulnerabilites..."
+                    echo "Verification des vulnerabilites..."
                     if npm audit --audit-level=high > /dev/null 2>&1; then
-                        echo "✅ Aucune vulnerabilite critique detectee"
+                        echo "Aucune vulnerabilite critique detectee"
                     else
-                        echo "⚠️ Vulnerabilites trouvees - Mise a jour"
+                        echo "Vulnerabilites trouvees - Mise a jour"
                         echo "NOTE: npm update sans --force pour eviter downgrade Prisma"
                         npm update || true
-                        echo "✅ Dependances mises a jour"
+                        echo "Dependances mises a jour"
                     fi
 
-                    echo "✅ ANALYSE DES DEPENDANCES - SUCCES"
+                    echo "ANALYSE DES DEPENDANCES - SUCCES"
                 '''
             }
         }
@@ -191,11 +225,11 @@ EOF
                 script {
                     if (!params.APPROUVER_DEPLOIEMENT) {
                         currentBuild.result = 'UNSTABLE'
-                        error("❌ Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee")
+                        error("Deploiement non autorise: la case APPROUVER_DEPLOIEMENT n'a pas ete cochee")
                     }
                 }
 
-                echo "✅ Approbation confirmee via parametre de lancement"
+                echo "Approbation confirmee via parametre de lancement"
             }
         }
 
@@ -212,19 +246,19 @@ EOF
                 sh '''
                     set -e
 
-                    echo "🔧 Verification des permissions Docker..."
+                    echo "Verification des permissions Docker..."
                     if ! docker ps > /dev/null 2>&1; then
-                        echo "❌ Docker inaccessible"
+                        echo "Docker inaccessible"
                         exit 1
                     else
-                        echo "✅ Permissions Docker OK"
+                        echo "Permissions Docker OK"
                     fi
 
-                    echo "🚀 Demarrage des services..."
+                    echo "Demarrage des services..."
                     docker compose --profile full up -d
-                    echo "✅ Services demarres"
+                    echo "Services demarres"
 
-                    echo "⏳ Attente que l'app soit healthy..."
+                    echo "Attente que l'application soit healthy..."
                     STATUS="starting"
                     COUNTER=0
                     MAX_RETRIES=30
@@ -233,23 +267,23 @@ EOF
                         STATUS=$(docker inspect --format='{{.State.Health.Status}}' $(docker compose ps -q app) 2>/dev/null || echo "starting")
 
                         if [ "$STATUS" = "healthy" ]; then
-                            echo "✅ App healthy! - Deploy reussi"
+                            echo "Application healthy - Deploiement reussi"
                             break
                         fi
 
-                        echo "   En attente... ($((COUNTER+1))/$MAX_RETRIES) - Statut: $STATUS"
+                        echo "En attente... ($((COUNTER+1))/$MAX_RETRIES) - Statut: $STATUS"
                         sleep 2
                         COUNTER=$((COUNTER + 1))
                     done
 
                     if [ "$STATUS" != "healthy" ]; then
-                        echo "❌ L'app n'est jamais devenue healthy"
-                        echo "📋 Logs du container app:"
+                        echo "L'application n'est jamais devenue healthy"
+                        echo "Logs du container app:"
                         docker compose logs app --tail=100
                         exit 1
                     fi
 
-                    echo "✅ DEPLOIEMENT - SUCCES"
+                    echo "DEPLOIEMENT - SUCCES"
                 '''
             }
         }
@@ -259,7 +293,7 @@ EOF
     post {
         failure {
             echo "=========================================="
-            echo "❌ PIPELINE ECHOUE"
+            echo "PIPELINE ECHOUE"
             echo "=========================================="
             echo "Build: ${BUILD_NUMBER}"
             echo "URL: ${BUILD_URL}console"
@@ -272,7 +306,7 @@ EOF
 
         success {
             echo "=========================================="
-            echo "✅ PIPELINE SUCCES"
+            echo "PIPELINE SUCCES"
             echo "=========================================="
             echo "Build: ${BUILD_NUMBER}"
             echo "Application: Assets Tracker - Deployee en production"
@@ -282,7 +316,7 @@ EOF
         always {
             sh '''
                 echo ""
-                echo "📊 Etat final des services:"
+                echo "Etat final des services:"
                 docker compose ps || true
             '''
         }
