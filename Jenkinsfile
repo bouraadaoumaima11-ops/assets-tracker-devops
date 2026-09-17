@@ -131,24 +131,25 @@ EOF
                         docker start sonarqube
 
                         echo "Attente que Sonarqube soit pret..."
-                        STATUS="starting"
                         COUNTER=0
                         MAX_RETRIES=40
+                        READY=false
 
                         while [ $COUNTER -lt $MAX_RETRIES ]; do
-                            STATUS=$(docker inspect --format='{{.State.Health.Status}}' sonarqube 2>/dev/null || echo "starting")
+                            RESPONSE=$(curl -s http://localhost:9000/api/system/status 2>/dev/null || echo "")
 
-                            if [ "$STATUS" = "healthy" ]; then
+                            if echo "$RESPONSE" | grep -q '"status":"UP"'; then
                                 echo "Sonarqube pret"
+                                READY=true
                                 break
                             fi
 
-                            echo "En attente de Sonarqube... ($((COUNTER+1))/$MAX_RETRIES) - Statut: $STATUS"
+                            echo "En attente de Sonarqube... ($((COUNTER+1))/$MAX_RETRIES)"
                             sleep 3
                             COUNTER=$((COUNTER + 1))
                         done
 
-                        if [ "$STATUS" != "healthy" ]; then
+                        if [ "$READY" != "true" ]; then
                             echo "Sonarqube n'a pas demarre a temps, analyse annulee"
                             exit 1
                         fi
