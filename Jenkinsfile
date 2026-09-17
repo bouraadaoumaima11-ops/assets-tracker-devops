@@ -136,7 +136,7 @@ EOF
                         READY=false
 
                         while [ $COUNTER -lt $MAX_RETRIES ]; do
-                            RESPONSE=$(curl -s http://localhost:9000/api/system/status 2>/dev/null || echo "")
+                            RESPONSE=$(curl -s http://host.docker.internal:9000/api/system/status 2>/dev/null || echo "")
 
                             if echo "$RESPONSE" | grep -q '"status":"UP"'; then
                                 echo "Sonarqube pret"
