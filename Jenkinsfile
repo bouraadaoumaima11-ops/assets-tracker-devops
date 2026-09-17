@@ -155,7 +155,7 @@ EOF
                         fi
                     '''
 
-                    withSonarQubeEnv('SonarQube') {
+                    withSonarQubeEnv('SonarQube-Server') {
                         sh '''
                             npx sonar-scanner \
                                 -Dsonar.projectKey=assets-tracker \
